@@ -124,6 +124,41 @@ try {
         $ip = Get-NetIPAddress -InterfaceAlias "kanpachi0" -AddressFamily IPv4 -ErrorAction SilentlyContinue
         if ($ip) { Bien "IP virtual $($ip.IPAddress)" } else { Mal "el adaptador no tomo direccion IPv4"; $fallos++ }
         Start-Sleep -Seconds 5
+
+        Paso "lo que netcfg mantiene sobre el adaptador"
+        $iface = Get-NetIPInterface -InterfaceAlias "kanpachi0" -AddressFamily IPv4 -ErrorAction SilentlyContinue
+        if (-not $iface) {
+            Mal "no se pudo leer la interfaz IPv4 de kanpachi0"
+            $fallos++
+        }
+        else {
+            # Metrica 1 para que los juegos prefieran la red virtual sobre la LAN
+            # o el WiFi. Sin apagar la automatica no dura: Windows la recalcula
+            # por velocidad de enlace en cada reconexion.
+            if ($iface.InterfaceMetric -eq 1) { Bien "metrica IPv4 = 1" }
+            else { Mal "metrica IPv4 = $($iface.InterfaceMetric), se esperaba 1"; $fallos++ }
+
+            if ($iface.AutomaticMetric -eq 'Disabled') { Bien "metrica automatica apagada" }
+            else { Mal "la metrica automatica sigue en $($iface.AutomaticMetric): Windows la va a recalcular"; $fallos++ }
+
+            # 1360 es lo que el motor pone solo sobre un camino de 1500, y netcfg
+            # tiene que llegar al mismo numero o los dos se pelean por la
+            # interfaz en cada reaplicado. Un camino mas angosto da menos, asi
+            # que el rango se comprueba en vez del valor exacto.
+            if ($iface.NlMtu -ge 1280 -and $iface.NlMtu -le 1380) { Bien "MTU $($iface.NlMtu), dentro de [1280, 1380]" }
+            else { Mal "MTU $($iface.NlMtu), fuera del rango del tunel"; $fallos++ }
+        }
+
+        # Kanpachi JAMAS enruta internet. Y no se trata de lo que escribimos
+        # nosotros: el motor puede instalar rutas que aprendio de la red.
+        $porDefecto = @(Get-NetRoute -InterfaceAlias "kanpachi0" -ErrorAction SilentlyContinue |
+            Where-Object { $_.DestinationPrefix -eq '0.0.0.0/0' -or $_.DestinationPrefix -eq '::/0' })
+        if ($porDefecto.Count -gt 0) {
+            Mal "hay $($porDefecto.Count) ruta(s) por defecto sobre kanpachi0, y no puede haber ninguna"
+            $porDefecto | ForEach-Object { Mal "    $($_.DestinationPrefix) -> $($_.NextHop)" }
+            $fallos++
+        }
+        else { Bien "ninguna ruta por defecto sobre el adaptador virtual" }
     }
 
     $motor = Get-Process kanpachi-engine -ErrorAction SilentlyContinue
