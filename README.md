@@ -120,7 +120,8 @@ The claim is meant to be checked rather than believed, and that is also why the
 engine lives in its own repository instead of inside the fork:
 
 ```
-git diff v2.6.4 v2.6.4-kanpachi.1     # one file, nine deletions
+git diff v2.6.4 v2.6.4-kanpachi.1 -- '*.rs'
+# one file changed, 8 insertions(+), 31 deletions(-)   ← the 8 are comments
 ```
 
 See the fork's
