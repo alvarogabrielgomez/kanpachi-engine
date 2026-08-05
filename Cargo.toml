@@ -13,3 +13,20 @@ repository = "https://github.com/accentiostudios/kanpachi-engine"
 # build on someone else's commit, at a moment nobody chose.
 [dependencies]
 easytier = { git = "https://github.com/EasyTier/EasyTier", tag = "v2.6.4" }
+
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+
+# Only what the command loop needs. `net` is deliberately absent: this engine
+# opens no socket of its own, and a dependency that cannot listen is a stronger
+# statement than a rule saying it must not.
+tokio = { version = "1", default-features = false, features = [
+    "rt-multi-thread",
+    "macros",
+    "io-std",
+    "io-util",
+    "sync",
+    "time",
+] }

@@ -2531,7 +2531,12 @@ dependencies = [
 name = "kanpachi-engine"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "easytier",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
 ]
 
 [[package]]
