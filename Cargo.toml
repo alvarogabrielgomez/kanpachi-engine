@@ -1,0 +1,15 @@
+[package]
+name = "kanpachi-engine"
+version = "0.1.0"
+edition = "2021"
+license = "LGPL-3.0-or-later"
+description = "Kanpachi's network engine: EasyTier as a library, with no administration portal"
+repository = "https://github.com/accentiostudios/kanpachi-engine"
+
+# The dependency is pinned to a TAG and never to a branch.
+#
+# On `main` the `launcher` and `instance_manager` modules no longer exist: the
+# whole RPC tree was deleted and reborn elsewhere. A branch would break the
+# build on someone else's commit, at a moment nobody chose.
+[dependencies]
+easytier = { git = "https://github.com/EasyTier/EasyTier", tag = "v2.6.4" }

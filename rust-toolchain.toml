@@ -1,0 +1,9 @@
+# Pinned to the toolchain EasyTier itself builds with at tag v2.6.4.
+#
+# It is not "the newest one that works": the dependency is a large tree with
+# native build scripts, and the compiler upstream tests against is the one with
+# the fewest unknowns. Raising it is a deliberate change, not a side effect of
+# whatever is installed on the machine.
+[toolchain]
+channel = "1.95"
+targets = ["x86_64-pc-windows-msvc"]

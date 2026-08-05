@@ -1,0 +1,71 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The engine is Windows-only. The client of Kanpachi is Windows-only, and the
+# TUN adapter, the packet-capture driver and the MSVC link step all are too, so
+# a Linux job here would prove nothing about the artefact that ships.
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sets up cl.exe and link.exe. Without it the native build scripts in the
+      # dependency tree (zstd-sys, kcp-sys, windivert) have no compiler.
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      # The toolchain comes from rust-toolchain.toml, pinned on purpose. It is
+      # not read here so that raising it stays a single-file change.
+      - name: rust
+        run: |
+          rustup show
+          rustc --version
+          cargo --version
+
+      # easytier's build.rs downloads protoc when it cannot find one. Installing
+      # it explicitly turns a network fetch inside a build script into a step
+      # that fails visibly when it fails.
+      - name: protoc
+        run: choco install protoc --no-progress -y
+
+      # bindgen, used by kcp-sys. The runner image ships LLVM; the path is
+      # stated rather than assumed to be on PATH.
+      - name: libclang
+        run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+
+      - name: build
+        run: cargo build --release
+
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: fmt
+        run: cargo fmt --check
+
+      - name: test
+        run: cargo test --release
+
+      # The invariant that justifies this binary existing at all: it must not
+      # listen anywhere. Enforced two ways, because they fail differently.
+      #
+      #   1. No source in this repository may construct a listener. Catches the
+      #      code before it can run.
+      #   2. The socket test in `tests/` starts the engine for real, with the
+      #      TUN device up, and fails on any LISTENING socket owned by the
+      #      process. Catches what a dependency opens on our behalf, which is
+      #      how the magic-DNS port was missed the first time it was measured.
+      #
+      # Step 2 arrives with the engine itself; `cargo test` above runs it.
+      - name: no listener in source
+        shell: pwsh
+        run: |
+          $hits = Select-String -Path src\*.rs -Pattern 'TcpListener|UdpSocket::bind|NamedPipe|CreateNamedPipe|bind\(' -AllMatches
+          if ($hits) {
+            $hits | ForEach-Object { Write-Host $_.Line }
+            throw "the engine has exactly one command input, stdin. A second channel rebuilds the unauthenticated portal under another name."
+          }
+          Write-Host "no listener constructed in src/"
