@@ -67,24 +67,44 @@ $daemon = $null
 
 try {
     Paso "arrancando el daemon en modo consola"
+    # La salida del daemon va a ficheros. Sin esto, cuando algo falla lo unico
+    # que queda es un exit code, y el motivo se lo lleva la ventana al cerrarse.
+    $daemonOut = Join-Path $env:TEMP 'kanpachi-daemon.out'
+    $daemonErr = Join-Path $env:TEMP 'kanpachi-daemon.err'
     $daemon = Start-Process -FilePath (Join-Path $Stage 'kanpachid.exe') `
         -ArgumentList '--console', '--data', $Data `
-        -PassThru -WindowStyle Minimized
+        -PassThru -WindowStyle Minimized `
+        -RedirectStandardOutput $daemonOut -RedirectStandardError $daemonErr
     Start-Sleep -Seconds 3
-    if ($daemon.HasExited) { throw "El daemon murio al arrancar (exit $($daemon.ExitCode))." }
+    if ($daemon.HasExited) {
+        Write-Host (Get-Content $daemonOut, $daemonErr -ErrorAction SilentlyContinue | Out-String)
+        throw "El daemon murio al arrancar (exit $($daemon.ExitCode))."
+    }
     Bien "daemon PID $($daemon.Id)"
 
     Paso "creando la sala"
     # kanpctl habla por el named pipe, que es la unica API local que hay. El
     # nombre de sala y el apodo van como params crudos porque el daemon es quien
     # los valida, con esquema estricto.
-    Push-Location $Repo
-    try {
-        $params = (@{ nickname = $Nick; name = $Room } | ConvertTo-Json -Compress)
-        $ctl = & go run ./internal/kanpctl -data $Data -params $params create_room 2>&1
-        Write-Host ($ctl -join "`n")
+    #
+    # Precompilado y no `go run`: dentro de una sesion elevada el entorno de Go
+    # es otro, y un fallo de compilacion ahi se confunde con un fallo del
+    # producto.
+    # Las comillas van escapadas, y hace falta. PowerShell 5.1 se las come al
+    # pasar el argumento a un ejecutable nativo, asi que {"name":"x"} le llega
+    # al proceso como {name:x}, que no es JSON. El sintoma fue un error de
+    # deserializacion dentro de kanpctl que no tenia nada que ver con kanpctl.
+    $params = (@{ nickname = $Nick; name = $Room } | ConvertTo-Json -Compress).Replace('"', '\"')
+    $antes = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $ctl = & (Join-Path $Stage 'kanpctl.exe') -data $Data -params $params create_room 2>&1
+    $codigo = $LASTEXITCODE
+    $ErrorActionPreference = $antes
+    Write-Host ($ctl -join "`n")
+    if ($codigo -ne 0) {
+        Mal "kanpctl salio con $codigo"
+        $fallos++
     }
-    finally { Pop-Location }
 
     Paso "esperando el adaptador virtual (hasta $Espera s)"
     $reloj = [Diagnostics.Stopwatch]::StartNew()
@@ -143,9 +163,22 @@ try {
         else { Bien "el motor murio con el daemon" }
     }
 }
+catch {
+    # Sin esto un fallo se lleva el motivo consigo y solo queda un exit code.
+    Mal "el script se rompio: $_"
+    Write-Host $_.ScriptStackTrace -ForegroundColor DarkGray
+    $fallos++
+}
 finally {
     if ($daemon -and -not $daemon.HasExited) { Stop-Process -Id $daemon.Id -Force }
     Get-Process kanpachi-engine -ErrorAction SilentlyContinue | Stop-Process -Force
+    Start-Sleep -Seconds 1
+    foreach ($f in @($daemonOut, $daemonErr)) {
+        if ($f -and (Test-Path $f) -and (Get-Item $f).Length -gt 0) {
+            Write-Host "`n--- $(Split-Path -Leaf $f) del daemon ---" -ForegroundColor DarkGray
+            Get-Content $f | Select-Object -Last 40 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+        }
+    }
     $sobra = Get-NetAdapter -Name "kanpachi*" -ErrorAction SilentlyContinue
     if ($sobra) { Write-Host "`n  --  quedan adaptadores: $($sobra.Name -join ', ')" -ForegroundColor Yellow }
 }
