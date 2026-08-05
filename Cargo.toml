@@ -11,8 +11,42 @@ repository = "https://github.com/accentiostudios/kanpachi-engine"
 # On `main` the `launcher` and `instance_manager` modules no longer exist: the
 # whole RPC tree was deleted and reborn elsewhere. A branch would break the
 # build on someone else's commit, at a moment nobody chose.
+# Features chosen on purpose, and the choosing is a security measure rather
+# than a size one.
+#
+# Turning a capability off with a flag leaves the code in the binary and trusts
+# the flag. Leaving the feature out DELETES the capability, which nothing can
+# re-enable at runtime.
+#
+# Dropped from the default set:
+#
+#   magic-dns  the one that matters most. It edits the machine's DNS and opens
+#              a loopback socket, and that socket is exactly what an earlier
+#              measurement of "does this thing listen" missed.
+#   socks5     a proxy into the virtual network. Surface with no purpose here.
+#   wireguard  boringtun, which exists to serve --vpn-portal. Kanpachi never
+#              runs a WireGuard server. It is NOT the tunnel encryption: that
+#              is `encryption_algorithm`, and it stays.
+#   faketcp    a transport nothing in the product asks for.
+#
+# Kept: tun, because there has to be an adapter; websocket, kcp and quic, which
+# are how peers reach each other through awkward networks; smoltcp, used by the
+# proxy path; zstd for compression; aes-gcm for the tunnel encryption.
+#
+# `windivert` is NOT in this list and cannot be: on Windows x86 and x86_64 it is
+# an unconditional dependency, so no combination of features removes the
+# packet-capture driver from the binary. That is why the product's containment
+# rests on the firewall and not on the engine being incapable.
 [dependencies]
-easytier = { git = "https://github.com/EasyTier/EasyTier", tag = "v2.6.4" }
+easytier = { git = "https://github.com/EasyTier/EasyTier", tag = "v2.6.4", default-features = false, features = [
+    "tun",
+    "websocket",
+    "smoltcp",
+    "kcp",
+    "quic",
+    "zstd",
+    "aes-gcm",
+] }
 
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
