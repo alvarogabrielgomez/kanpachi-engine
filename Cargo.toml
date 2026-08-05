@@ -4,13 +4,30 @@ version = "0.1.0"
 edition = "2021"
 license = "LGPL-3.0-or-later"
 description = "Kanpachi's network engine: EasyTier as a library, with no administration portal"
-repository = "https://github.com/accentiostudios/kanpachi-engine"
+repository = "https://github.com/alvarogabrielgomez/kanpachi-engine"
 
-# The dependency is pinned to a TAG and never to a branch.
+# The dependency is a FORK of EasyTier, pinned to a TAG and never to a branch.
 #
-# On `main` the `launcher` and `instance_manager` modules no longer exist: the
-# whole RPC tree was deleted and reborn elsewhere. A branch would break the
-# build on someone else's commit, at a moment nobody chose.
+# The fork exists for one reason, and it is measured. Upstream writes permanent
+# Windows Firewall ALLOW rules from inside `NetworkInstance::start()`: one that
+# opens the virtual adapter to all traffic, and one that grants this executable
+# inbound "any protocol" on EVERY interface of the machine, home network
+# included. Neither can be turned off through a feature, a config field or an
+# environment variable, and both outlive the process that caused them.
+#
+# Kanpachi opens only what the active game profile asks for, only toward the
+# members present in the room. An allow-all on the same interface undoes that
+# in the same layer used to grant access, so the calls are removed instead.
+#
+# The fork is upstream `v2.6.4` plus those two deletions and nothing else,
+# which is meant to be checked rather than believed:
+#
+#     git diff v2.6.4 v2.6.4-kanpachi.1
+#
+# A branch would be worse than a tag on either repository: on upstream `main`
+# the `launcher` and `instance_manager` modules no longer exist, because the
+# whole RPC tree was deleted and reborn elsewhere. A branch breaks the build on
+# someone else's commit, at a moment nobody chose.
 # Features chosen on purpose, and the choosing is a security measure rather
 # than a size one.
 #
@@ -38,7 +55,7 @@ repository = "https://github.com/accentiostudios/kanpachi-engine"
 # packet-capture driver from the binary. That is why the product's containment
 # rests on the firewall and not on the engine being incapable.
 [dependencies]
-easytier = { git = "https://github.com/EasyTier/EasyTier", tag = "v2.6.4", default-features = false, features = [
+easytier = { git = "https://github.com/alvarogabrielgomez/EasyTier", tag = "v2.6.4-kanpachi.1", default-features = false, features = [
     "tun",
     "websocket",
     "smoltcp",

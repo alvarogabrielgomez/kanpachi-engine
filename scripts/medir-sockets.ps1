@@ -96,6 +96,12 @@ $psi.RedirectStandardError = $true
 $psi.UseShellExecute = $false
 $psi.WorkingDirectory = Split-Path -Parent $Exe
 
+# Snapshot BEFORE starting. What matters is the transition, never a loose state:
+# an empty group after the run proves nothing if it was never going to fill, and
+# a full one proves nothing if it was already full.
+$reglasAntes = @(Get-NetFirewallRule -Group 'EasyTier' -ErrorAction SilentlyContinue |
+    Select-Object -Expand Name)
+
 $p = [System.Diagnostics.Process]::Start($psi)
 $salida = New-Object System.Text.StringBuilder
 $fallos = 0
@@ -147,6 +153,38 @@ try {
     # and it is not a failure.
     Write-Host "  --  $($udp.Count) endpoint(s) UDP ligados (esperado: el motor habla UDP)" -ForegroundColor DarkGray
     $udp | ForEach-Object { Write-Host "      $($_.LocalAddress):$($_.LocalPort)" -ForegroundColor DarkGray }
+
+    Paso "comprobando que el motor NO escribio reglas en el firewall"
+    # Upstream EasyTier writes eight permanent ALLOW rules while creating the
+    # adapter, grouped under "EasyTier": one set opens the virtual interface to
+    # all traffic, and one grants this executable inbound "any protocol" on
+    # EVERY interface of the machine, home network included.
+    #
+    # The second one is why the fork exists rather than a sweep afterwards. The
+    # WFP gate is scoped to the virtual adapter by design, and that scoping is
+    # the invariant that keeps a hard block from taking the user's home network
+    # down, so it is structurally unable to cover a rule that applies everywhere.
+    #
+    # This check is the one that says whether the fork is in the binary.
+    $reglasAhora = @(Get-NetFirewallRule -Group 'EasyTier' -ErrorAction SilentlyContinue |
+        Select-Object -Expand Name)
+    $nuevas = @($reglasAhora | Where-Object { $reglasAntes -notcontains $_ })
+
+    if ($nuevas.Count -gt 0) {
+        Mal "el motor escribio $($nuevas.Count) regla(s) en el grupo EasyTier:"
+        Get-NetFirewallRule -Group 'EasyTier' -ErrorAction SilentlyContinue |
+            Where-Object { $nuevas -contains $_.Name } |
+            ForEach-Object { Mal "    $($_.DisplayName) [$($_.Direction) $($_.Action)]" }
+        Mal "Estas compilando contra EasyTier de upstream y no contra el fork."
+        $fallos++
+    }
+    else {
+        Bien "ninguna regla nueva en el grupo EasyTier"
+    }
+    if ($reglasAntes.Count -gt 0) {
+        Write-Host "  --  ya habia $($reglasAntes.Count) regla(s) de antes en ese grupo, de una corrida del motor viejo" -ForegroundColor Yellow
+        Write-Host "      las quita scripts/limpiar-reglas-del-motor.ps1 en el repo de Kanpachi" -ForegroundColor Yellow
+    }
 
     Paso "comprobando que el secreto no esta en la linea de comandos"
     $cmdline = (Get-CimInstance Win32_Process -Filter "ProcessId = $($p.Id)").CommandLine

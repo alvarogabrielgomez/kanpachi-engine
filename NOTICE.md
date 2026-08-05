@@ -1,25 +1,41 @@
 # Third-party notices
 
-`kanpachi-engine` is the network engine of [Kanpachi](https://github.com/accentiostudios).
-This file records what it includes, under which licence, and how to exercise the
-rights those licences grant you.
+`kanpachi-engine` is the network engine of
+[Kanpachi](https://github.com/alvarogabrielgomez/kanpachi). This file records
+what it includes, under which licence, and how to exercise the rights those
+licences grant you.
 
 Written in English, unlike Kanpachi's design documents, because it is addressed
 to anyone who redistributes the binary rather than to the people who build it.
 
-## EasyTier
+## EasyTier, as a modified library
 
-- **Project**: [EasyTier](https://github.com/EasyTier/EasyTier)
-- **Version**: tag [`v2.6.4`](https://github.com/EasyTier/EasyTier/tree/v2.6.4)
+- **Upstream**: [EasyTier](https://github.com/EasyTier/EasyTier)
+- **What is linked**: a **fork**,
+  [alvarogabrielgomez/EasyTier](https://github.com/alvarogabrielgomez/EasyTier),
+  tag [`v2.6.4-kanpachi.1`](https://github.com/alvarogabrielgomez/EasyTier/tree/v2.6.4-kanpachi.1)
 - **Licence**: GNU Lesser General Public License, version 3 or later
 
-`kanpachi-engine` declares EasyTier as a Rust library dependency and links it
-**statically**. Under LGPL-3.0 that makes this binary a *Combined Work* in the
-sense of section 4, so the licence requires that you be able to replace the
-EasyTier part with a modified version and relink.
+**The fork is upstream `v2.6.4` with two calls removed and nothing else.** Both
+wrote permanent Windows Firewall ALLOW rules, by COM, from inside network
+startup: one opened the virtual adapter to all traffic, and one granted the
+executable inbound "any protocol" on every interface of the machine. Neither
+could be disabled through a cargo feature, a config field or an environment
+variable. The reasoning is in
+[FORK.md](https://github.com/alvarogabrielgomez/EasyTier/blob/kanpachi/FORK.md),
+and the claim is meant to be verified rather than believed:
+
+```
+git diff v2.6.4 v2.6.4-kanpachi.1
+```
+
+`kanpachi-engine` links that library **statically**. Under LGPL-3.0 this binary
+is therefore a *Combined Work* in the sense of section 4, and the licence
+requires that you be able to replace the EasyTier part with a version of your
+own and relink.
 
 **How to do that.** `Cargo.toml` in the root of this repository pins the exact
-EasyTier revision by tag. Point it at your own checkout or fork:
+revision by tag. Point it at your own checkout or fork instead:
 
 ```toml
 [dependencies]
@@ -28,7 +44,7 @@ easytier = { path = "../your-easytier/easytier" }
 
 and run `cargo build --release`. Nothing in this repository is obfuscated,
 generated, or withheld: the complete corresponding source of the Combined Work
-is this repository plus the tag above.
+is this repository plus the fork above, whose own source is published in full.
 
 Full licence texts are in this repository:
 
@@ -52,8 +68,9 @@ the network **during compilation** and links them into the output:
 | [YY-Thunks](https://github.com/Chuyu-Team/YY-Thunks) | 1.1.7 | `objs/x64/YY_Thunks_for_Win7.obj` |
 
 Their only purpose is to let the binary run on Windows 7. Kanpachi targets
-Windows 10 and 11, so they add nothing here and ship anyway; removing them would
-mean patching EasyTier, which is the cost this project exists to avoid.
+Windows 10 and 11, so they add nothing here and ship anyway. Removing them is
+now possible in principle, since a fork already exists, and it has not been done
+because nothing about them is known to be harmful.
 
 **Their licence terms have not been reviewed yet.** They are listed so that
 whoever distributes a build knows they are in it.
