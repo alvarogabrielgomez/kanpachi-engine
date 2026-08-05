@@ -225,7 +225,7 @@ impl Engine {
             .ok_or_else(|| anyhow!("the engine does not know its own node yet"))?;
 
         let mut out = vec![PeerOut {
-            virtual_ip: me.ipv4_addr.clone(),
+            virtual_ip: bare_addr(&me.ipv4_addr),
             hostname: me.hostname.clone(),
             path: "self",
             rtt_ms: 0,
@@ -237,9 +237,16 @@ impl Engine {
             .routes;
 
         for r in routes {
-            let ip = r.ipv4_addr.map(|a| format!("{a}")).unwrap_or_default();
+            // A node with no address in the room is not a member of it.
+            //
+            // The public seed lands here: it relays for the room and does not
+            // live in its address space, so it comes back with no `ipv4_addr`.
+            // Reporting it put a nameless member on everyone's screen, and
+            // handed the daemon a member to key firewall rules on that has no
+            // address to key them on.
+            let Some(addr) = r.ipv4_addr else { continue };
             out.push(PeerOut {
-                virtual_ip: ip,
+                virtual_ip: bare_addr(&format!("{addr}")),
                 hostname: r.hostname,
                 path: if r.cost <= 1 { "direct" } else { "relay" },
                 rtt_ms: r.path_latency,
@@ -381,3 +388,42 @@ async fn pump(
 /// place until Windows tears it down with the process, which the user sees as
 /// a network card that lingers.
 pub const SHUTDOWN_GRACE: Duration = Duration::from_millis(300);
+
+/// Strips a prefix length so that `virtual_ip` is what the protocol says it is.
+///
+/// # The bug this fixes, seen in a real room
+///
+/// `NodeInfo.ipv4_addr` carries the configured address WITH its prefix, so this
+/// node reported itself as `10.99.61.1/24`. The daemon parses that field with
+/// `netip.ParseAddr`, which refuses anything but a bare address, so **every**
+/// call to `peers` failed:
+///
+/// ```text
+/// el motor reportó la dirección "10.99.61.1/24", que no es una dirección
+/// ```
+///
+/// Nothing crashed and the room stayed up, which is why it went unnoticed: what
+/// broke was the member list, and with it the firewall rules toward members and
+/// the inference of whether the host is still present.
+///
+/// It is fixed here rather than in the daemon on purpose. The daemon's strict
+/// parse is right: it is the reason this was visible at all. What was wrong is
+/// this side sending something other than what the field promises.
+fn bare_addr(s: &str) -> String {
+    match s.split_once('/') {
+        Some((addr, _)) => addr.to_string(),
+        None => s.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bare_addr;
+
+    #[test]
+    fn strips_the_prefix_and_leaves_a_bare_address_alone() {
+        assert_eq!(bare_addr("10.99.61.1/24"), "10.99.61.1");
+        assert_eq!(bare_addr("10.99.61.1"), "10.99.61.1");
+        assert_eq!(bare_addr(""), "");
+    }
+}
