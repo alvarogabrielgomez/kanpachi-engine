@@ -1,9 +1,24 @@
 # kanpachi-engine
 
-The network engine of [Kanpachi](https://github.com/alvarogabrielgomez/kanpachi):
-a small Windows binary that builds an encrypted peer-to-peer network using
-[EasyTier](https://github.com/EasyTier/EasyTier) as a library, and that **listens
-on nothing**.
+Part of **[Kanpachi Protection](https://github.com/alvarogabrielgomez/kanpachi/blob/main/kanpachi-protection.md)**:
+*everything the game did not ask for is closed on the virtual adapter.*
+
+This is the network engine of
+[Kanpachi](https://github.com/alvarogabrielgomez/kanpachi): a small Windows
+binary that builds the encrypted peer-to-peer network and **listens on nothing**.
+
+Its share of that promise is narrow and worth stating plainly. **The engine
+decides nothing.** It moves packets. What may be reached is decided and written
+by the daemon, so a compromise of this binary cannot open the machine, and this
+binary offers no way to be told otherwise.
+
+It is built on
+[kanpachi/EasyTier](https://github.com/alvarogabrielgomez/EasyTier), Kanpachi's
+fork of [EasyTier](https://github.com/EasyTier/EasyTier), pinned to the tag
+[`v2.6.4-kanpachi.1`](https://github.com/alvarogabrielgomez/EasyTier/tree/v2.6.4-kanpachi.1).
+Upstream unconditionally writes Windows Firewall rules that open the virtual
+adapter, and the fork is upstream with those two calls removed and nothing else.
+[Why, in detail.](#the-firewall-and-why-the-dependency-is-a-fork)
 
 It takes commands on stdin and writes answers and events on stdout. It has no
 port, no named pipe, no config file, and it accepts no command-line arguments at
@@ -27,7 +42,7 @@ includes `127.0.0.0/8`, which is no barrier to another process on the same
 machine.
 
 **The portal is not part of the library.** `ApiRpcServer::new` is constructed in
-exactly one place in the whole EasyTier tree, inside its command-line binary. A
+exactly one place in the whole tree, inside upstream's command-line binary. A
 program that drives the library and never writes that line does not get a portal.
 There is no flag to forget:
 
@@ -81,17 +96,36 @@ on the firewall rather than on this engine being incapable.
 
 ### The firewall, and why the dependency is a fork
 
-EasyTier writes permanent Windows Firewall ALLOW rules while creating the
+**Upstream** writes permanent Windows Firewall ALLOW rules while creating the
 virtual adapter, on the library path as well as the CLI one: one rule set opens
 the virtual interface to all traffic, and another grants the running executable
 inbound "any protocol" on **every** interface of the machine. Neither can be
-disabled through a feature, a config field or an environment variable.
+disabled through a feature, a config field or an environment variable, and both
+outlive the process, a reboot and an uninstall.
 
 Kanpachi opens only the ports the active game profile asks for, only toward the
-addresses of the members present in the room. So this engine links a fork,
-[alvarogabrielgomez/EasyTier](https://github.com/alvarogabrielgomez/EasyTier),
-which is upstream `v2.6.4` with those two calls removed and nothing else. See
-its `FORK.md`.
+addresses of the members present in the room. An allow-all on the same interface
+undoes that in the same layer Kanpachi uses to grant access, and the second rule
+cannot be covered by Kanpachi's firewall gate at all: that gate is scoped to the
+virtual adapter by design, which is the invariant that stops a hard block from
+taking down the user's home network.
+
+Hence the fork,
+[kanpachi/EasyTier](https://github.com/alvarogabrielgomez/EasyTier), which is
+upstream `v2.6.4` with those two calls removed and nothing else. Removing them
+is safe: upstream already treated the failure of both as non-fatal, logging a
+warning and continuing.
+
+The claim is meant to be checked rather than believed, and that is also why the
+engine lives in its own repository instead of inside the fork:
+
+```
+git diff v2.6.4 v2.6.4-kanpachi.1     # one file, nine deletions
+```
+
+See the fork's
+[FORK.md](https://github.com/alvarogabrielgomez/EasyTier/blob/kanpachi/FORK.md),
+which carries the changelog against upstream.
 
 ## The command channel
 
@@ -161,7 +195,7 @@ name could hand back one the gate does not cover.
 ## Building
 
 Windows only, x86_64, MSVC toolchain. Rust is pinned by `rust-toolchain.toml` to
-the version EasyTier itself builds with.
+the version upstream EasyTier builds with.
 
 ```powershell
 .\scripts\build.ps1                     # builds into C:\kt
@@ -176,7 +210,7 @@ the target directory somewhere short because `cl.exe` is not long-path aware,
 and says which tool is missing instead of letting the compiler guess. A cold
 build takes roughly twenty minutes.
 
-`build.rs` in this repository repairs one more trap: EasyTier's own build script
+`build.rs` in this repository repairs one more trap: the library's own build script
 emits a **relative** link search path for `Packet.lib`, which resolves against
 the consuming package and therefore fails to link. This one points the linker at
 the copy cargo already unpacked, rather than committing a third-party binary
@@ -200,7 +234,7 @@ takes the engine and its network down with it.
 
 ## Licence
 
-LGPL-3.0-or-later, because it links EasyTier statically and is therefore a
-*Combined Work* under section 4. [NOTICE.md](NOTICE.md) records every third-party
-component and explains how to replace the EasyTier part with your own and
-relink, which that section entitles you to do.
+LGPL-3.0-or-later, because it links the forked library statically and is
+therefore a *Combined Work* under section 4. [NOTICE.md](NOTICE.md) records every
+third-party component and explains how to replace the EasyTier part with a
+version of your own and relink, which that section entitles you to do.
