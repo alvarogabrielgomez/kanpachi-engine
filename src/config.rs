@@ -109,9 +109,38 @@ fn base(common: &Common) -> anyhow::Result<TomlConfigLoader> {
     Ok(cfg)
 }
 
+/// Turns secure mode on with a freshly generated keypair.
+///
+/// # Why every node needs this, and not only the guest
+///
+/// A credential node authenticates with a Noise handshake, and the other end
+/// answers it **only if it has secure mode too**: `peer_conn.rs` takes the
+/// Noise branch on `is_secure_mode_enabled() && packet_type ==
+/// NoiseHandshakeMsg1`, and everything else falls through to
+/// `unexpected packet type during handshake: 13`, which closes the connection.
+///
+/// So a host without this refuses the very guests it just issued credentials
+/// to. Over the relay it merely never connects; on a hole-punched direct link
+/// it is worse, because the room falls back to relaying every packet of the
+/// game through the seed. Upstream's own credential tests enable it on every
+/// node in the topology, admin included.
+///
+/// No key is passed: `process_secure_mode_cfg` generates one per start. The
+/// identity being checked here is the guest's credential, not the host's, and
+/// a key that survived restarts would be a secret on disk buying nothing.
+fn secure() -> anyhow::Result<SecureModeConfig> {
+    process_secure_mode_cfg(SecureModeConfig {
+        enabled: true,
+        local_private_key: None,
+        local_public_key: None,
+    })
+    .context("generating the keypair for secure mode")
+}
+
 /// The admin node: the only one that knows the real network secret.
 pub fn host(args: &HostArgs) -> anyhow::Result<TomlConfigLoader> {
     let cfg = base(&args.common)?;
+    cfg.set_secure_mode(Some(secure()?));
     cfg.set_network_identity(NetworkIdentity::new(
         args.network_name.clone(),
         args.network_secret.clone(),
@@ -130,6 +159,10 @@ pub fn host(args: &HostArgs) -> anyhow::Result<TomlConfigLoader> {
 /// that happens inside is asking the host for a credential.
 pub fn rendezvous(args: &RendezvousArgs) -> anyhow::Result<TomlConfigLoader> {
     let cfg = base(&args.common)?;
+    // Same as the room: a guest that reaches the lobby over a direct link
+    // opens it with Noise, and without this the lobby drops it and the
+    // credential exchange never happens.
+    cfg.set_secure_mode(Some(secure()?));
     cfg.set_network_identity(NetworkIdentity::new(
         args.network_name.clone(),
         args.network_secret.clone(),
