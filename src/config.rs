@@ -180,8 +180,26 @@ pub fn rendezvous(args: &RendezvousArgs) -> anyhow::Result<TomlConfigLoader> {
 /// That is the whole reason revoking a credential closes the door: whoever came
 /// in this way never held anything they could come back with.
 ///
-/// The address is not set. It arrives from the host as part of admission, so
-/// `dhcp` is on here and off on the two nodes that know their own address.
+/// # The address is SET here, and DHCP is off
+///
+/// It used to be the other way round, with a comment saying the address
+/// "arrives from the host as part of admission". Half of that was true: the
+/// host does decide it and does write it into the credential. What was false is
+/// that anybody told this side, so `dhcp` picked its own and the two numbers
+/// only matched until somebody reconnected. See [`crate::proto::GuestArgs`].
+///
+/// Turning DHCP off buys a second thing, and it may be the bigger one.
+/// EasyTier's `check_dhcp_ip_conflict` loop calls `clear_nic_ctx` whenever its
+/// chosen address stops fitting the peers it sees, which **destroys and
+/// recreates the adapter**. When the host leaves a room, the only route left is
+/// the public seed, which holds no address inside the room, so the loop falls
+/// back to its default `10.126.126.0/24` and tears the guest's `kanpachi0`
+/// down. That matches what a guest's log showed on 2026-08-08: `no hay ningún
+/// adaptador llamado "kanpachi0"` with the room still open. With `dhcp` off the
+/// loop is never spawned.
+///
+/// The lobby has always worked this way —fixed address, `dhcp` off— and never
+/// had either problem.
 ///
 /// The credential itself is an X25519 private key, and it travels in
 /// `SecureModeConfig`. `process_secure_mode_cfg` derives the matching public
@@ -191,7 +209,10 @@ pub fn rendezvous(args: &RendezvousArgs) -> anyhow::Result<TomlConfigLoader> {
 pub fn guest(args: &GuestArgs) -> anyhow::Result<TomlConfigLoader> {
     let cfg = base(&args.common)?;
     cfg.set_network_identity(NetworkIdentity::new_credential(args.network_name.clone()));
-    cfg.set_dhcp(true);
+    cfg.set_ipv4(Some(args.ipv4.parse().with_context(|| {
+        format!("guest address {:?} is not an address with a prefix", args.ipv4)
+    })?));
+    cfg.set_dhcp(false);
     cfg.set_secure_mode(Some(
         process_secure_mode_cfg(SecureModeConfig {
             enabled: true,

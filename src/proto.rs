@@ -85,6 +85,27 @@ pub struct Common {
     pub peers: Vec<String>,
     #[serde(default)]
     pub mtu: Option<u32>,
+    /// Where this process writes `kanpachi-engine.log`. `None` writes nothing.
+    ///
+    /// # Why the daemon has to say it
+    ///
+    /// Because "next to the executable" is wrong exactly when the log matters
+    /// most: in the portable bundle this binary lives in a temporary directory
+    /// that gets deleted on the way out, so the file would die at the moment
+    /// somebody was about to send it. It is the same reason the daemon has a
+    /// `--log` flag.
+    ///
+    /// # Why it comes through the protocol and not the environment
+    ///
+    /// Because the daemon starts this process with an EMPTY environment, on
+    /// purpose: every EasyTier flag has an environment twin, so an inherited
+    /// environment is a way to switch on capabilities nobody wrote down. The
+    /// command channel is the only way in, which is the whole point of it.
+    ///
+    /// It rides in `Common` because logging starts with the first network and
+    /// there is no command that comes earlier.
+    #[serde(default)]
+    pub log_dir: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,6 +150,25 @@ pub struct GuestArgs {
     /// secret, so an id would be a field accepted and ignored, which is the
     /// kind of silence the strict decoding above exists to prevent.
     pub credential_secret: String,
+    /// This node's address inside the room, as `10.99.77.2/24`.
+    ///
+    /// **With the prefix**, like `HostArgs::ipv4` and for the same reason: it
+    /// parses into an `Ipv4Inet`, which is an address AND a network.
+    ///
+    /// # Why the daemon sends it, when it used to be DHCP's job
+    ///
+    /// Because the host already decided it, wrote it into the credential and
+    /// told the guest — and then nobody told the engine, which picked its own
+    /// with DHCP. Two algorithms computing the same thing separately, agreeing
+    /// only until somebody reconnected.
+    ///
+    /// Measured on 2026-08-08: the host issued `10.99.29.9` and the adapter
+    /// took `10.99.29.2`, because the host counts issued credentials for 24
+    /// hours while DHCP counts connected peers. The daemon waits 30 s for the
+    /// address in the credential, never gets it, and tears the room down. From
+    /// the first failure on, every retry fails the same way: the host's number
+    /// climbs and the engine's stays put.
+    pub ipv4: String,
 }
 
 #[derive(Debug, Deserialize)]

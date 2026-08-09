@@ -32,6 +32,7 @@
 
 mod config;
 mod engine;
+mod log;
 mod proto;
 
 use std::io::IsTerminal;
@@ -211,11 +212,11 @@ fn strict(line: &str) -> anyhow::Result<Request> {
 async fn dispatch(eng: &mut Engine, req: &Request) -> Response {
     let id = req.id;
     match &req.cmd {
-        Command::Host(a) => match eng.host(a) {
+        Command::Host(a) => match eng.host(a).await {
             Ok(()) => Response::ok(id),
             Err(e) => Response::failed(id, e),
         },
-        Command::JoinRendezvous(a) => match eng.join_rendezvous(a) {
+        Command::JoinRendezvous(a) => match eng.join_rendezvous(a).await {
             Ok(()) => Response::ok(id),
             Err(e) => Response::failed(id, e),
         },
@@ -223,7 +224,7 @@ async fn dispatch(eng: &mut Engine, req: &Request) -> Response {
             eng.leave_rendezvous();
             Response::ok(id)
         }
-        Command::Join(a) => match eng.join(a) {
+        Command::Join(a) => match eng.join(a).await {
             Ok(()) => Response::ok(id),
             Err(e) => Response::failed(id, e),
         },

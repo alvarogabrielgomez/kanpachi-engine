@@ -66,14 +66,16 @@ impl Engine {
         Engine { room: None, lobby: None, room_mtu: DEFAULT_MTU, out }
     }
 
-    pub fn host(&mut self, args: &HostArgs) -> anyhow::Result<()> {
+    pub async fn host(&mut self, args: &HostArgs) -> anyhow::Result<()> {
+        crate::log::init_once(args.common.log_dir.as_deref());
         self.room_mtu = args.common.mtu.unwrap_or(DEFAULT_MTU);
-        self.start(Slot::Room, config::host(args)?)
+        self.start(Slot::Room, config::host(args)?).await
     }
 
-    pub fn join(&mut self, args: &GuestArgs) -> anyhow::Result<()> {
+    pub async fn join(&mut self, args: &GuestArgs) -> anyhow::Result<()> {
+        crate::log::init_once(args.common.log_dir.as_deref());
         self.room_mtu = args.common.mtu.unwrap_or(DEFAULT_MTU);
-        self.start(Slot::Room, config::guest(args)?)
+        self.start(Slot::Room, config::guest(args)?).await
     }
 
     /// Entering the lobby REPLACES the previous one.
@@ -81,9 +83,16 @@ impl Engine {
     /// That is what makes renewing the invite code work: the lobby's name comes
     /// from the invite id, so a new code is a new lobby, and staying in the old
     /// one would produce a code nobody can enter through.
-    pub fn join_rendezvous(&mut self, args: &RendezvousArgs) -> anyhow::Result<()> {
-        self.lobby = None;
-        self.start(Slot::Lobby, config::rendezvous(args)?)
+    ///
+    /// The replacing itself is [`Engine::start`]'s job now, for every slot. It
+    /// used to be one line here and nowhere else, which is exactly why the room
+    /// went without it.
+    pub async fn join_rendezvous(&mut self, args: &RendezvousArgs) -> anyhow::Result<()> {
+        // El invitado entra al VESTÍBULO primero, así que para él esta es la
+        // primera orden del proceso y la única oportunidad de encender el log
+        // antes de que empiece lo interesante.
+        crate::log::init_once(args.common.log_dir.as_deref());
+        self.start(Slot::Lobby, config::rendezvous(args)?).await
     }
 
     /// Leaves ONLY the lobby, and says nothing when there is no lobby.
@@ -98,11 +107,49 @@ impl Engine {
         self.lobby = None;
     }
 
-    fn start(
+    /// Starts a network instance in a slot, REPLACING whatever was there.
+    ///
+    /// # Why the old one is dropped BEFORE the new one is built
+    ///
+    /// Because both want the same virtual adapter, named by the daemon. This
+    /// used to build and start the new instance first and only drop the old one
+    /// when assigning the slot, so for a moment two instances fought over
+    /// `kanpachi0`.
+    ///
+    /// What that looked like, measured on 2026-08-08: creating a room right
+    /// after another one, the adapter kept the PREVIOUS room's address. The
+    /// daemon waited 30 s for the new one and reported `el adaptador
+    /// "kanpachi0" no tomó la dirección 10.99.113.1 en 30s (el adaptador existe
+    /// con 10.99.175.1)`.
+    ///
+    /// And dropping alone is not enough: it only signals the instance's thread
+    /// to stop, it does not wait. Hence the grace, which is the same one the
+    /// process already waits before exiting, and for the same reason.
+    ///
+    /// The grace is paid ONLY when there was something to replace. A first
+    /// start owes nobody a wait.
+    ///
+    /// # What this gives up, on purpose
+    ///
+    /// If `start` fails, the previous room is gone rather than left running.
+    /// That is a real loss and it is the better trade: the caller's error path
+    /// tears the room down anyway, and two engines on one adapter is a room
+    /// that connects at random, which is far worse to live with than one that
+    /// failed cleanly.
+    async fn start(
         &mut self,
         slot: Slot,
         cfg: easytier::common::config::TomlConfigLoader,
     ) -> anyhow::Result<()> {
+        let previa = match slot {
+            Slot::Room => self.room.take(),
+            Slot::Lobby => self.lobby.take(),
+        };
+        if previa.is_some() {
+            drop(previa);
+            tokio::time::sleep(SHUTDOWN_GRACE).await;
+        }
+
         let mut instance = NetworkInstance::new(cfg, ConfigFileControl::STATIC_CONFIG);
 
         // `start` is synchronous: it spawns its own thread with its own Tokio
