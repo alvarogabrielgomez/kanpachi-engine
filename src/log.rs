@@ -32,13 +32,31 @@ use std::sync::Once;
 use easytier::common::config::{ConsoleLoggerConfig, FileLoggerConfig, LoggingConfig};
 
 /// The log's name, next to the daemon's own `kanpachi.log`.
-const FILE: &str = "kanpachi-engine";
+///
+/// **With the extension, because this string IS the filename.** EasyTier joins
+/// `dir` and `file` verbatim and defaults to `easytier.log`, so a bare
+/// `kanpachi-engine` produced a file with no extension that Windows offers to
+/// open with a program picker. Measured on 2026-08-09 in the portable bundle.
+const FILE: &str = "kanpachi-engine.log";
 
-/// Two megabytes and one previous copy, which is what the daemon's log does and
-/// for the same reasons: it opens in Notepad, and it fits several sessions of
-/// something that talks on purpose.
-const SIZE_MB: u64 = 2;
-const COUNT: usize = 2;
+/// Eight megabytes and two previous copies.
+///
+/// **Bigger than the daemon's, and that is not sloppiness: this file fills much
+/// faster.** EasyTier logs one INFO line per multicast packet it cannot route,
+/// and a Windows machine emits SSDP and mDNS constantly, so `no peer id for ip:
+/// 239.255.255.250` is most of the volume. Measured: 266 KB in fifteen minutes,
+/// about a megabyte an hour, which at two megabytes wraps in the middle of the
+/// session somebody is trying to explain.
+///
+/// The noise is NOT filtered out, on purpose. EasyTier parses this level with
+/// `s.parse::<LevelFilter>().unwrap()`, so it takes a bare level and an
+/// `EnvFilter` directive like `easytier::peers::peer_manager=warn` panics
+/// rather than narrowing anything. And silencing that target wholesale would
+/// take the peer routing lines with it, which are exactly what a host that
+/// cannot see its guest is diagnosed with. So every line is kept and more of
+/// them are held.
+const SIZE_MB: u64 = 8;
+const COUNT: usize = 3;
 
 static UNA_VEZ: Once = Once::new();
 
