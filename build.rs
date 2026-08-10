@@ -178,10 +178,52 @@ fn embed_windows_version_info() {
     let quad = format!("{},{},{},{}", parts[0], parts[1], parts[2], parts[3]);
     let dotted = format!("{}.{}.{}.{}", parts[0], parts[1], parts[2], parts[3]);
 
-    // `1` es `VS_VERSION_INFO`, y tiene que ser ese número. `040904b0` es
-    // inglés de EEUU en UTF-16, que es la pareja que espera el bloque de abajo.
+    // **El manifiesto es lo que impide un UAC que nadie pidió.**
+    //
+    // Medido el 2026-08-10: este ejecutable hacía aparecer el diálogo de Control
+    // de cuentas de usuario A SU NOMBRE, con el daemon lanzándolo por
+    // `CreateProcess`, que hereda el token y no eleva nada. La causa no está en
+    // este repositorio: KB5089549 y KB5087051 cambiaron la lógica de Windows
+    // para INFERIR si un ejecutable **sin manifiesto embebido** necesita
+    // elevación, y esa inferencia ya alcanza a los binarios de 64 bits. Un
+    // binario de Rust no lleva manifiesto.
+    //
+    // Declarar `asInvoker` es el arreglo que documenta Microsoft para este caso,
+    // y además dice la verdad: este proceso **nunca** necesita elevación. Lo que
+    // necesita permisos es el daemon, que ya corre elevado y le pasa el token.
+    let manifest = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="Accentio.Kanpachi.Engine" version="1.0.0.0" processorArchitecture="amd64"/>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </application>
+  </compatibility>
+</assembly>
+"#;
+    let manifest_file = out.join("kanpachi-engine.manifest");
+    if let Err(e) = fs::write(&manifest_file, manifest) {
+        println!("cargo:warning=no se pudo escribir el manifiesto: {e}");
+        return;
+    }
+    // rc.exe resuelve la ruta relativa al `.rc`, y los dos viven en OUT_DIR.
+    let manifest_name = "kanpachi-engine.manifest";
+
+    // `1` es `VS_VERSION_INFO` para el bloque de versión y
+    // `CREATEPROCESS_MANIFEST_RESOURCE_ID` para el manifiesto; `24` es
+    // `RT_MANIFEST`. Los dos números tienen que ser esos. `040904b0` es inglés
+    // de EEUU en UTF-16, que es la pareja que espera el bloque de abajo.
     let script = format!(
-        r#"1 VERSIONINFO
+        r#"1 24 "{manifest_name}"
+
+1 VERSIONINFO
 FILEVERSION {quad}
 PRODUCTVERSION {quad}
 FILEOS 0x40004L
@@ -191,6 +233,7 @@ FILETYPE 0x1L
   {{
     BLOCK "040904b0"
     {{
+      VALUE "Comments", "Runs the encrypted peer-to-peer tunnel a Kanpachi room is made of. Started by the Kanpachi service and never on its own.\0"
       VALUE "CompanyName", "Accentio Studios\0"
       VALUE "FileDescription", "Kanpachi tunnel engine\0"
       VALUE "FileVersion", "{dotted}\0"
