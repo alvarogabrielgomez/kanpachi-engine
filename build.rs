@@ -38,9 +38,15 @@
 //! for vendored trees and for anyone whose layout is not one of these.
 
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn main() {
+    // Antes de cualquier salida temprana: no depende del enlazado y no debe
+    // perderse porque la rama de arriba haya contestado.
+    embed_windows_version_info();
+
     println!("cargo:rerun-if-env-changed=KANPACHI_ENGINE_LINK_SEARCH");
 
     if let Ok(dir) = env::var("KANPACHI_ENGINE_LINK_SEARCH") {
@@ -120,4 +126,179 @@ fn cargo_roots() -> Vec<PathBuf> {
         out.push(Path::new(&home).join(".cargo"));
     }
     out
+}
+
+/// Le pone nombre al ejecutable en el Administrador de tareas de Windows.
+///
+/// # Por qué hace falta
+///
+/// La columna «Nombre» del Administrador de tareas muestra el `FileDescription`
+/// del recurso VERSIONINFO, no el nombre del archivo. Un binario de Rust no
+/// lleva ninguno, así que este proceso aparecía como `kanpachi-engine.exe` con
+/// el icono genérico, al lado de una lista donde todo lo demás dice su nombre en
+/// palabras. Ahora dice **Kanpachi tunnel engine**.
+///
+/// # Por qué a mano y no con una crate
+///
+/// `winresource` y `embed-resource` hacen esto en tres líneas, y las dos
+/// significan meter una dependencia de compilación en un proyecto que revisa una
+/// por una las que tiene —el `Cargo.toml` de al lado es medio ensayo sobre el
+/// tema—. Generar un `.rc` e invocar el `rc.exe` que el SDK de Windows ya trae
+/// cuesta lo mismo y no agrega nada al árbol.
+///
+/// **Falla en blando a propósito.** Si no aparece `rc.exe`, avisa y sigue: el
+/// binario queda sin nombre bonito, que es un defecto cosmético. Romper una
+/// compilación por eso sería peor que el problema.
+fn embed_windows_version_info() {
+    println!("cargo:rerun-if-env-changed=KANPACHI_ENGINE_RC");
+
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
+    // El `.res` se lo come `link.exe`. Con el toolchain GNU haría falta
+    // `windres` y otro camino, así que no se intenta.
+    if env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
+        return;
+    }
+
+    let Ok(out_dir) = env::var("OUT_DIR") else {
+        return;
+    };
+    let out = PathBuf::from(out_dir);
+
+    // `0.1.0` -> `0,1,0,0`. VERSIONINFO quiere cuatro números y el paquete da
+    // tres, así que el cuarto se completa en vez de inventarse.
+    let raw = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| String::from("0.0.0"));
+    let mut parts: Vec<u32> = raw
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    parts.resize(4, 0);
+    let quad = format!("{},{},{},{}", parts[0], parts[1], parts[2], parts[3]);
+    let dotted = format!("{}.{}.{}.{}", parts[0], parts[1], parts[2], parts[3]);
+
+    // `1` es `VS_VERSION_INFO`, y tiene que ser ese número. `040904b0` es
+    // inglés de EEUU en UTF-16, que es la pareja que espera el bloque de abajo.
+    let script = format!(
+        r#"1 VERSIONINFO
+FILEVERSION {quad}
+PRODUCTVERSION {quad}
+FILEOS 0x40004L
+FILETYPE 0x1L
+{{
+  BLOCK "StringFileInfo"
+  {{
+    BLOCK "040904b0"
+    {{
+      VALUE "CompanyName", "Accentio Studios\0"
+      VALUE "FileDescription", "Kanpachi tunnel engine\0"
+      VALUE "FileVersion", "{dotted}\0"
+      VALUE "InternalName", "kanpachi-engine\0"
+      VALUE "LegalCopyright", "Accentio Studios\0"
+      VALUE "OriginalFilename", "kanpachi-engine.exe\0"
+      VALUE "ProductName", "Kanpachi\0"
+      VALUE "ProductVersion", "{dotted}\0"
+    }}
+  }}
+  BLOCK "VarFileInfo"
+  {{
+    VALUE "Translation", 0x409, 1200
+  }}
+}}
+"#
+    );
+
+    let rc_file = out.join("kanpachi-engine.rc");
+    let res_file = out.join("kanpachi-engine.res");
+    if let Err(e) = fs::write(&rc_file, script) {
+        println!("cargo:warning=no se pudo escribir el recurso de version: {e}");
+        return;
+    }
+
+    let Some(rc) = find_resource_compiler() else {
+        println!(
+            "cargo:warning=no se encontro rc.exe del SDK de Windows, \
+             asi que el ejecutable va sin nombre en el Administrador de tareas. \
+             Se puede indicar con KANPACHI_ENGINE_RC."
+        );
+        return;
+    };
+
+    match Command::new(&rc)
+        .arg("/nologo")
+        .arg("/fo")
+        .arg(&res_file)
+        .arg(&rc_file)
+        .status()
+    {
+        Ok(status) if status.success() => {
+            // `-bins` y no `rustc-link-arg` a secas: esto es para el ejecutable,
+            // y no tiene por qué colarse en cada artefacto que se enlace.
+            println!("cargo:rustc-link-arg-bins={}", res_file.display());
+        }
+        Ok(status) => {
+            println!("cargo:warning=rc.exe termino con {status}, se sigue sin recurso de version");
+        }
+        Err(e) => {
+            println!("cargo:warning=no se pudo ejecutar {}: {e}", rc.display());
+        }
+    }
+}
+
+/// Busca el `rc.exe` del SDK de Windows, el más nuevo que haya.
+///
+/// Se PRUEBAN los sitios en vez de escribir uno, por lo mismo que
+/// [`find_third_party`]: la versión del SDK instalada es de la máquina y no del
+/// proyecto. `KANPACHI_ENGINE_RC` gana sobre todo lo demás.
+fn find_resource_compiler() -> Option<PathBuf> {
+    if let Ok(path) = env::var("KANPACHI_ENGINE_RC") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+
+    let host = match env::var("HOST").unwrap_or_default().as_str() {
+        h if h.starts_with("aarch64") => "arm64",
+        h if h.starts_with("i686") => "x86",
+        _ => "x64",
+    };
+
+    let mut found: Vec<PathBuf> = Vec::new();
+    for base in ["ProgramFiles(x86)", "ProgramFiles"] {
+        let Ok(program_files) = env::var(base) else {
+            continue;
+        };
+        let bin = Path::new(&program_files)
+            .join("Windows Kits")
+            .join("10")
+            .join("bin");
+        let Ok(versions) = fs::read_dir(&bin) else {
+            continue;
+        };
+        for version in versions.flatten() {
+            let candidate = version.path().join(host).join("rc.exe");
+            if candidate.is_file() {
+                found.push(candidate);
+            }
+        }
+    }
+
+    // Los directorios se llaman `10.0.26100.0`, así que el orden alfabético NO
+    // es el de versión en cuanto un número pase de una cifra. Se ordena por los
+    // componentes numéricos.
+    found.sort_by_key(|p| {
+        p.parent()
+            .and_then(Path::parent)
+            .and_then(|d| d.file_name())
+            .map(|n| {
+                n.to_string_lossy()
+                    .split('.')
+                    .filter_map(|s| s.parse::<u32>().ok())
+                    .collect::<Vec<u32>>()
+            })
+            .unwrap_or_default()
+    });
+    found.pop()
 }
