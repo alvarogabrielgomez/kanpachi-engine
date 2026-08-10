@@ -128,7 +128,20 @@ fn cargo_roots() -> Vec<PathBuf> {
     out
 }
 
-/// Le pone nombre al ejecutable en el Administrador de tareas de Windows.
+/// Le pone nombre, icono y nivel de elevación al ejecutable.
+///
+/// # El icono, y de dónde sale
+///
+/// `resources/kanpachi-engine.ico`: el cuadro naranja del producto con un
+/// engranaje BLANCO encima. El daemon lleva el mismo engranaje en naranja sobre
+/// gris, y el producto va sin engranaje, así que los tres se distinguen en la
+/// lista del Administrador de tareas.
+///
+/// **La fuente vectorial vive en el otro repositorio**, en `logos/
+/// kanpachi_engine_icon.svg` de `kanpachi`, y acá viaja el `.ico` ya
+/// rasterizado. Es la misma frontera que el binario: este repositorio se
+/// construye solo, así que no puede depender de que el otro esté al lado.
+/// Lleva 16, 32, 48 y 256 dentro, dibujados uno por uno en vez de escalados.
 ///
 /// # Por qué hace falta
 ///
@@ -216,12 +229,35 @@ fn embed_windows_version_info() {
     // rc.exe resuelve la ruta relativa al `.rc`, y los dos viven en OUT_DIR.
     let manifest_name = "kanpachi-engine.manifest";
 
+    // El icono se COPIA a OUT_DIR en vez de referenciarse donde vive, para que
+    // el `.rc` no lleve una ruta absoluta de Windows con barras invertidas, que
+    // en un script de recursos hay que escapar y es una fuente de fallos tonta.
+    let icon_name = "kanpachi-engine.ico";
+    let icon_src = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap_or_default())
+        .join("resources")
+        .join(icon_name);
+    println!("cargo:rerun-if-changed={}", icon_src.display());
+    let has_icon = fs::copy(&icon_src, out.join(icon_name)).is_ok();
+    if !has_icon {
+        println!(
+            "cargo:warning=no se encontro {}, el ejecutable va sin icono",
+            icon_src.display()
+        );
+    }
+    // `1` es el id mas bajo, y el mas bajo es el que Windows toma como icono de
+    // la aplicacion. Sin icono la linea se omite entera.
+    let icon_line = if has_icon {
+        format!("1 ICON \"{icon_name}\"\n")
+    } else {
+        String::new()
+    };
+
     // `1` es `VS_VERSION_INFO` para el bloque de versión y
     // `CREATEPROCESS_MANIFEST_RESOURCE_ID` para el manifiesto; `24` es
     // `RT_MANIFEST`. Los dos números tienen que ser esos. `040904b0` es inglés
     // de EEUU en UTF-16, que es la pareja que espera el bloque de abajo.
     let script = format!(
-        r#"1 24 "{manifest_name}"
+        r#"{icon_line}1 24 "{manifest_name}"
 
 1 VERSIONINFO
 FILEVERSION {quad}
