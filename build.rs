@@ -54,6 +54,23 @@ fn main() {
         return;
     }
 
+    // Everything below this line repairs a WINDOWS link, and the `panic!` at the
+    // end of it made a Linux build impossible.
+    //
+    // `Packet.lib` is the import library for `Packet.dll`, so it exists only on
+    // Windows. On Linux EasyTier reaches the TUN device through `/dev/net/tun`
+    // and programs addresses and routes over netlink, with no such library in
+    // the picture, and its build script emits no relative link search path
+    // either. So there is nothing to repair and searching for it fails loudly
+    // for a file that is not supposed to be there.
+    //
+    // CARGO_CFG_TARGET_OS and not the host: what decides is what is being built
+    // FOR. `KANPACHI_ENGINE_LINK_SEARCH` above still wins, for anyone who needs
+    // to point the linker somewhere by hand.
+    if env::var("CARGO_CFG_TARGET_OS").unwrap_or_default() != "windows" {
+        return;
+    }
+
     // Same architecture mapping as easytier's own build script.
     let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let leaf = match arch.as_str() {

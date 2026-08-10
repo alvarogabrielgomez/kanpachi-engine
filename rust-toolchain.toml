@@ -6,4 +6,12 @@
 # whatever is installed on the machine.
 [toolchain]
 channel = "1.95"
-targets = ["x86_64-pc-windows-msvc"]
+# Los dos objetivos, y cada artefacto se compila EN su sistema.
+#
+# Que estén los dos acá no habilita el cross-compile y no pretende habilitarlo:
+# en Linux, EasyTier arrastra `dbus` vendored, `zstd-sys` y `kcp-sys` con
+# bindgen, o sea tres cadenas de C que necesitarían enlazador y sysroot de Linux
+# montados a mano en Windows. Lo que esta lista hace es que un `rustup` en
+# cualquiera de las dos máquinas instale lo que ahí hace falta sin que nadie
+# tenga que acordarse del nombre del objetivo.
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
