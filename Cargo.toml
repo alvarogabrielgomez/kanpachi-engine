@@ -55,7 +55,7 @@ repository = "https://github.com/alvarogabrielgomez/kanpachi-engine"
 # packet-capture driver from the binary. That is why the product's containment
 # rests on the firewall and not on the engine being incapable.
 [dependencies]
-easytier = { git = "https://github.com/alvarogabrielgomez/EasyTier", tag = "v2.6.4-kanpachi.1", default-features = false, features = [
+easytier = { git = "https://github.com/alvarogabrielgomez/EasyTier", tag = "v2.6.4-kanpachi.2", default-features = false, features = [
     "tun",
     "websocket",
     "smoltcp",

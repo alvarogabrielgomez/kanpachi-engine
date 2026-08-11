@@ -171,8 +171,15 @@ whole message rather than being dropped.
 ```
 
 Commands: `host`, `join_rendezvous`, `leave_rendezvous`, `join`, `leave`,
-`issue_credential`, `revoke_credential`, `list_credentials`, `peers`,
-`diagnostics`.
+`issue_credential`, `renew_credential`, `revoke_credential`, `list_credentials`,
+`peers`, `diagnostics`.
+
+`renew_credential` pushes an existing credential's expiry to `now + ttl` and
+**keeps its keypair**, which is the whole point: the credential secret is the
+holder's Noise static key, so reissuing would make it a different peer that has
+to be re-trusted and loses its session. It answers with the new `expiry_unix`
+rather than letting the caller compute it, so the deadline the engine enforces
+and the one the daemon believes are the same number.
 
 Events: `connected`, `peers_changed`, `degraded`, `disconnected`. There is no
 `died`: a process cannot report its own death, so the daemon raises that one

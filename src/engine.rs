@@ -28,8 +28,8 @@ use easytier::common::global_ctx::GlobalCtxEvent;
 use easytier::common::config::ConfigFileControl;
 use easytier::launcher::NetworkInstance;
 use easytier::proto::api::instance::{
-    GenerateCredentialRequest, ListCredentialsRequest, ListRouteRequest, RevokeCredentialRequest,
-    ShowNodeInfoRequest,
+    GenerateCredentialRequest, ListCredentialsRequest, ListRouteRequest, RenewCredentialRequest,
+    RevokeCredentialRequest, ShowNodeInfoRequest,
 };
 use easytier::proto::rpc_types::controller::BaseController;
 use tokio::sync::broadcast::error::RecvError;
@@ -37,7 +37,7 @@ use tokio::sync::mpsc;
 
 use crate::proto::{
     CredentialOut, CredentialSummary, DiagnosticsOut, Event, EventKind, GuestArgs, HostArgs,
-    IssueArgs, Outgoing, PeerOut, RendezvousArgs, RevokeArgs,
+    IssueArgs, Outgoing, PeerOut, RendezvousArgs, RenewArgs, RevokeArgs,
 };
 use crate::config;
 
@@ -210,6 +210,43 @@ impl Engine {
             credential_id: res.credential_id,
             credential_secret: res.credential_secret,
         })
+    }
+
+    /// Pushes a credential's expiry out, keeping its keypair.
+    ///
+    /// # Why this is not "issue again with the same id"
+    ///
+    /// Because that does nothing. `generate_credential` given an id that
+    /// already exists returns the stored secret and leaves the expiry where it
+    /// was, so a daemon renewing that way would watch every member drop on
+    /// schedule while its own calls reported success.
+    ///
+    /// # Why an unknown id is an error here and a flag on the wire
+    ///
+    /// Same shape as revoking. The RPC answers `success: false` because a
+    /// caller renewing on a timer legitimately races revocation and expiry, and
+    /// this turns it into an error so the daemon can tell it apart from the
+    /// engine being unreachable, which is the case where retrying makes sense.
+    pub async fn renew_credential(&self, args: &RenewArgs) -> anyhow::Result<i64> {
+        if args.ttl_seconds <= 0 {
+            return Err(anyhow!("the credential's lifetime has to be more than zero seconds"));
+        }
+        let api = self.api()?;
+        let res = api
+            .get_credential_manage_service()
+            .renew_credential(
+                BaseController::default(),
+                RenewCredentialRequest {
+                    credential_id: args.credential_id.clone(),
+                    ttl_seconds: args.ttl_seconds,
+                    instance: None,
+                },
+            )
+            .await?;
+        if !res.success {
+            return Err(anyhow!("no credential with id {:?}", args.credential_id));
+        }
+        Ok(res.expiry_unix)
     }
 
     pub async fn revoke_credential(&self, args: &RevokeArgs) -> anyhow::Result<()> {

@@ -62,6 +62,14 @@ pub enum Command {
     /// started.
     Leave(Empty),
     IssueCredential(IssueArgs),
+    /// Push an already issued credential's expiry out, keeping its keypair.
+    ///
+    /// Separate from issuing because it is a different intent with a different
+    /// cost: issuing hands out a new Noise static key, which the holder can
+    /// only adopt by tearing its instance down. Renewing changes a date and
+    /// nothing else, so a room can outlive one credential lifetime without
+    /// every member reconnecting on a timer.
+    RenewCredential(RenewArgs),
     RevokeCredential(RevokeArgs),
     ListCredentials(Empty),
     Peers(Empty),
@@ -180,6 +188,15 @@ pub struct IssueArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct RenewArgs {
+    pub credential_id: String,
+    /// Seconds, counted from NOW and not from the old expiry. Must be greater
+    /// than zero, same as issuing.
+    pub ttl_seconds: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RevokeArgs {
     pub credential_id: String,
 }
@@ -213,6 +230,7 @@ impl Response {
 #[serde(rename_all = "snake_case")]
 pub enum Data {
     Credential(CredentialOut),
+    Renewed(RenewedOut),
     Credentials(Vec<CredentialSummary>),
     Peers(Vec<PeerOut>),
     Diagnostics(DiagnosticsOut),
@@ -222,6 +240,18 @@ pub enum Data {
 pub struct CredentialOut {
     pub credential_id: String,
     pub credential_secret: String,
+}
+
+/// What renewing gives back: the expiry the engine actually stored.
+///
+/// It travels instead of being recomputed by the daemon as `now + ttl`, and
+/// that is the same lesson as [`GuestArgs::ipv4`]: two sides computing the same
+/// value separately agree until they do not, and here the disagreement would be
+/// a daemon that believes a credential is good for another day when the engine
+/// says otherwise.
+#[derive(Debug, Serialize)]
+pub struct RenewedOut {
+    pub expiry_unix: i64,
 }
 
 #[derive(Debug, Serialize)]

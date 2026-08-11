@@ -42,7 +42,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
 use crate::engine::Engine;
-use crate::proto::{Command, Data, Outgoing, Request, Response};
+use crate::proto::{Command, Data, Outgoing, RenewedOut, Request, Response};
 
 /// The cap on one incoming line.
 ///
@@ -234,6 +234,10 @@ async fn dispatch(eng: &mut Engine, req: &Request) -> Response {
         }
         Command::IssueCredential(a) => match eng.issue_credential(a).await {
             Ok(c) => Response::with(id, Data::Credential(c)),
+            Err(e) => Response::failed(id, e),
+        },
+        Command::RenewCredential(a) => match eng.renew_credential(a).await {
+            Ok(expiry_unix) => Response::with(id, Data::Renewed(RenewedOut { expiry_unix })),
             Err(e) => Response::failed(id, e),
         },
         Command::RevokeCredential(a) => match eng.revoke_credential(a).await {
