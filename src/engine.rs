@@ -163,13 +163,35 @@ impl Engine {
             Slot::Lobby => self.lobby = Some(instance),
         }
 
-        // Only the room's events reach the daemon. The lobby is a waiting area
-        // that lasts as long as a credential exchange, and reporting its peers
-        // as room members would put strangers in the member list, which is
-        // what the firewall opens ports for.
-        if slot == Slot::Room {
-            tokio::spawn(pump(events, self.out.clone()));
-        }
+        // The room reports everything. The lobby reports ONLY what happened to
+        // its adapter.
+        //
+        // # Why the lobby is filtered at all
+        //
+        // Because it is a waiting area that anyone holding the invite code can
+        // reach, and reporting its peers as room members would put strangers in
+        // the list the firewall opens ports for.
+        //
+        // # Why it is no longer silent, which cost two days
+        //
+        // The lobby used to report nothing, and `TunDeviceError` is the event
+        // carrying the reason a virtual adapter failed. For a GUEST the lobby is
+        // the first command of the process, so the one event that says why was
+        // thrown away in the only case where it mattered.
+        //
+        // Measured on 2026-08-11 on a guest's machine that could not join. The
+        // engine had written the answer and dropped it:
+        //
+        //     TunDeviceError("rust tun error Failed to create adapter")
+        //
+        // What the daemon saw instead was thirty seconds of nothing followed by
+        // a timeout about an address, which sends anyone to look at addressing,
+        // the one thing that was right.
+        //
+        // An adapter is not a peer: saying that ours failed leaks nothing about
+        // who else is in the lobby.
+        let solo_adaptador = slot == Slot::Lobby;
+        tokio::spawn(pump(events, self.out.clone(), solo_adaptador));
         Ok(())
     }
 
@@ -390,9 +412,12 @@ impl Engine {
 /// What that costs is detection on the user's machine for something that passes
 /// in CI and breaks in the field. Written down here so it is a known cost and
 /// not a discovery.
+/// `solo_adaptador` keeps everything except the adapter's own fate off the wire.
+/// It is what the lobby runs with; see the call site in [`Engine::start`].
 async fn pump(
     mut events: tokio::sync::broadcast::Receiver<GlobalCtxEvent>,
     out: mpsc::UnboundedSender<Outgoing>,
+    solo_adaptador: bool,
 ) {
     loop {
         let ev = match events.recv().await {
@@ -401,6 +426,14 @@ async fn pump(
             // behind is not an error and must not end the pump: dropping the
             // pump would leave the daemon with a room that never reports a
             // change again. A burst of joins is exactly when this happens.
+            //
+            // Lagging is about PEERS, so the lobby says nothing: its own
+            // re-read would be a room event about a network that has no
+            // members as far as the daemon is concerned.
+            Err(RecvError::Lagged(n)) if solo_adaptador => {
+                let _ = n;
+                continue;
+            }
             Err(RecvError::Lagged(n)) => {
                 let _ = out.send(Outgoing::Event(Event::new(
                     EventKind::PeersChanged,
@@ -410,6 +443,24 @@ async fn pump(
             }
             Err(RecvError::Closed) => return,
         };
+
+        // The lobby's whole vocabulary is ONE event: its adapter failed.
+        //
+        // Not `TunDeviceReady`, and that exclusion carries weight. Ready
+        // translates to `Connected`, and the daemon's supervisor treats
+        // Connected as "the tunnel is up": for a guest still exchanging a
+        // credential in the lobby that would fire the room's whole
+        // connected-path — rebinding, rule application, announcements — on a
+        // network that is not the room. The daemon already detects lobby
+        // readiness by polling the adapter's address, so Ready adds nothing
+        // and can mislead.
+        //
+        // The error, in contrast, is the one fact the daemon cannot get any
+        // other way, and dropping it is what turned a named driver problem
+        // into a thirty-second silence. See the call site.
+        if solo_adaptador && !matches!(ev, GlobalCtxEvent::TunDeviceError(_)) {
+            continue;
+        }
 
         let translated = match ev {
             GlobalCtxEvent::TunDeviceReady(dev) => {

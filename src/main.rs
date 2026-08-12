@@ -55,6 +55,13 @@ const MAX_LINE: usize = 1 << 20;
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    // Before anything can panic. A panic goes straight to stderr, the daemon
+    // writes this process's stderr into kanpachi.log, and that file gets sent
+    // over chat: the hook runs the panic message through the same redaction
+    // the log file gets. See [log::install_panic_hook].
+    log::install_panic_hook();
+
+
     // No arguments, ever. Every knob this engine has arrives over stdin from
     // the process that created it, so an argument can only be somebody trying
     // to steer it from outside that channel.

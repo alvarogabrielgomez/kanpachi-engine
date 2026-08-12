@@ -70,6 +70,18 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"
 
+# El subscriber de `tracing` se arma acá y no se toma el de EasyTier, porque el
+# suyo no tiene por dónde meter una capa y hace falta envolver el ESCRITOR para
+# que el secreto de la red y la llave privada no terminen en un fichero que se
+# manda por chat. Ver `src/log.rs`.
+#
+# Las versiones son las MISMAS que declara EasyTier, `0.1` y `0.3`, y tienen que
+# seguir siéndolo: si cargo resolviera dos incompatibles, el `Registry` de acá
+# sería otro tipo que el de sus capas. Eso no compila, que es la forma buena de
+# fallar.
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
 # Only what the command loop needs. `net` is deliberately absent: this engine
 # opens no socket of its own, and a dependency that cannot listen is a stronger
 # statement than a rule saying it must not.
