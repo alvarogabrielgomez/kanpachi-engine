@@ -1127,7 +1127,7 @@ dependencies = [
 [[package]]
 name = "easytier"
 version = "2.6.4"
-source = "git+https://github.com/alvarogabrielgomez/EasyTier?branch=kanpachi#c98aa15404a59274ee4311c3f8eb8f01d629bc1b"
+source = "git+https://github.com/alvarogabrielgomez/EasyTier?branch=kanpachi#a16c7e31c73b5102ee81ededa8bab2b175957e8d"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1261,7 +1261,7 @@ dependencies = [
 [[package]]
 name = "easytier-rpc-build"
 version = "0.1.0"
-source = "git+https://github.com/alvarogabrielgomez/EasyTier?branch=kanpachi#c98aa15404a59274ee4311c3f8eb8f01d629bc1b"
+source = "git+https://github.com/alvarogabrielgomez/EasyTier?branch=kanpachi#a16c7e31c73b5102ee81ededa8bab2b175957e8d"
 dependencies = [
  "heck 0.5.0",
  "prost-build",
