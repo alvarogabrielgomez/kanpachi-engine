@@ -14,11 +14,28 @@ binary offers no way to be told otherwise.
 
 It is built on
 [kanpachi/EasyTier](https://github.com/alvarogabrielgomez/EasyTier), Kanpachi's
-fork of [EasyTier](https://github.com/EasyTier/EasyTier), pinned to the tag
-[`v2.6.4-kanpachi.1`](https://github.com/alvarogabrielgomez/EasyTier/tree/v2.6.4-kanpachi.1).
-Upstream unconditionally writes Windows Firewall rules that open the virtual
-adapter, and the fork is upstream with those two calls removed and nothing else.
+fork of [EasyTier](https://github.com/EasyTier/EasyTier). Upstream
+unconditionally writes Windows Firewall rules that open the virtual adapter, and
+the fork removes those two calls.
 [Why, in detail.](#the-firewall-and-why-the-dependency-is-a-fork)
+
+**It follows the fork's `kanpachi` branch, which MOVES.** That is deliberate:
+the fork is not versioned, Kanpachi is at v0, and a tag per patch set would buy
+a number nobody reads at the price of force-pushing it every time the fork
+changes. What records the exact commit this builds is `Cargo.lock`, and that is
+the file to read when the question is "which EasyTier is this".
+
+**To pin instead of follow, point at a tag.** There is one,
+[`v2.6.4-kanpachi`](https://github.com/alvarogabrielgomez/EasyTier/tree/v2.6.4-kanpachi),
+a snapshot of the branch:
+
+```toml
+easytier = { git = "https://github.com/alvarogabrielgomez/EasyTier", tag = "v2.6.4-kanpachi", ... }
+```
+
+A tag is a snapshot and never moves. When the fork changes and somebody needs a
+pin at the new point, that is the moment to cut a tag for it and to decide how
+to name the series. Deciding it now costs a naming scheme and buys nothing.
 
 It takes commands on stdin and writes answers and events on stdout. It has no
 port, no named pipe, no config file, and it accepts no command-line arguments at
@@ -112,16 +129,16 @@ taking down the user's home network.
 
 Hence the fork,
 [kanpachi/EasyTier](https://github.com/alvarogabrielgomez/EasyTier), which is
-upstream `v2.6.4` with those two calls removed and nothing else. Removing them
-is safe: upstream already treated the failure of both as non-fatal, logging a
+upstream `v2.6.4` with those two calls removed, plus `renew_credential`, which
+pushes a credential's expiry forward without reissuing it. Removing the two is
+safe: upstream already treated the failure of both as non-fatal, logging a
 warning and continuing.
 
 The claim is meant to be checked rather than believed, and that is also why the
 engine lives in its own repository instead of inside the fork:
 
 ```
-git diff v2.6.4 v2.6.4-kanpachi.1 -- '*.rs'
-# one file changed, 8 insertions(+), 31 deletions(-)   ← the 8 are comments
+git diff v2.6.4 kanpachi -- '*.rs' '*.proto'
 ```
 
 See the fork's

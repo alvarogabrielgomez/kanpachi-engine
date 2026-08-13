@@ -19,15 +19,23 @@ repository = "https://github.com/alvarogabrielgomez/kanpachi-engine"
 # members present in the room. An allow-all on the same interface undoes that
 # in the same layer used to grant access, so the calls are removed instead.
 #
-# The fork is upstream `v2.6.4` plus those two deletions and nothing else,
-# which is meant to be checked rather than believed:
+# The fork is upstream `v2.6.4` plus those two deletions, plus
+# `renew_credential`, which pushes a credential's expiry forward without
+# reissuing it. Each hunk is listed in the fork's own FORK.md, and the claim is
+# meant to be checked rather than believed:
 #
-#     git diff v2.6.4 v2.6.4-kanpachi.1
+#     git diff v2.6.4 kanpachi -- '*.rs' '*.proto'
 #
-# A branch would be worse than a tag on either repository: on upstream `main`
-# the `launcher` and `instance_manager` modules no longer exist, because the
-# whole RPC tree was deleted and reborn elsewhere. A branch breaks the build on
-# someone else's commit, at a moment nobody chose.
+# A branch on the fork, and the asymmetry against upstream is the point. Pointing
+# at upstream `main` would break the build on somebody else's commit at a moment
+# nobody chose: the `launcher` and `instance_manager` modules are already gone
+# there, because the whole RPC tree was deleted and reborn elsewhere. The
+# `kanpachi` branch is ours and nobody else moves it, so that objection does not
+# carry over, and `Cargo.lock` is what records which commit this actually builds.
+#
+# It is a branch rather than a versioned tag because the engine is not versioned
+# yet. Kanpachi is at v0, and a tag per patch set buys a number nobody reads at
+# the price of force-pushing it every time the fork moves.
 # Features chosen on purpose, and the choosing is a security measure rather
 # than a size one.
 #
@@ -55,7 +63,7 @@ repository = "https://github.com/alvarogabrielgomez/kanpachi-engine"
 # packet-capture driver from the binary. That is why the product's containment
 # rests on the firewall and not on the engine being incapable.
 [dependencies]
-easytier = { git = "https://github.com/alvarogabrielgomez/EasyTier", tag = "v2.6.4-kanpachi.2", default-features = false, features = [
+easytier = { git = "https://github.com/alvarogabrielgomez/EasyTier", branch = "kanpachi", default-features = false, features = [
     "tun",
     "websocket",
     "smoltcp",
