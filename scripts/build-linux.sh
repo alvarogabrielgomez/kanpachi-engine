@@ -29,7 +29,7 @@
 #      `/mnt/c` still works and pays 4. It is the normal way to use it, and the
 #      target directory going to `$HOME/.cache` is what keeps it bearable.
 #
-# The engine links a FORK of EasyTier, pinned by tag. See Cargo.toml.
+# The engine links a FORK of EasyTier, following its kanpachi branch; Cargo.lock pins the commit. See Cargo.toml.
 #
 # Usage:
 #   scripts/build-linux.sh [--clean] [--stage DIR]

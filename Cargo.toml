@@ -6,7 +6,8 @@ license = "LGPL-3.0-or-later"
 description = "Kanpachi's network engine: EasyTier as a library, with no administration portal"
 repository = "https://github.com/alvarogabrielgomez/kanpachi-engine"
 
-# The dependency is a FORK of EasyTier, pinned to a TAG and never to a branch.
+# The dependency is a FORK of EasyTier, following its `kanpachi` branch, with
+# Cargo.lock as the only authority on which commit gets built.
 #
 # The fork exists for one reason, and it is measured. Upstream writes permanent
 # Windows Firewall ALLOW rules from inside `NetworkInstance::start()`: one that
@@ -20,9 +21,13 @@ repository = "https://github.com/alvarogabrielgomez/kanpachi-engine"
 # in the same layer used to grant access, so the calls are removed instead.
 #
 # The fork is upstream `v2.6.4` plus those two deletions, plus
-# `renew_credential`, which pushes a credential's expiry forward without
-# reissuing it. Each hunk is listed in the fork's own FORK.md, and the claim is
-# meant to be checked rather than believed:
+# `renew_credential` (pushes a credential's expiry forward without reissuing
+# it), plus four backports of upstream fixes that exist in no release
+# (#2301, #2315, #2393, #2476), plus one change of its own: the owner election
+# for a non-reusable credential prefers the freshest incarnation, so a peer
+# that reconnects no longer loses to its own ghost. Each hunk is listed in the
+# fork's own FORK.md, and the claim is meant to be checked rather than
+# believed:
 #
 #     git diff v2.6.4 kanpachi -- '*.rs' '*.proto'
 #

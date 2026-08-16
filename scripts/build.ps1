@@ -20,7 +20,7 @@
          points at with a path relative to the wrong root. `build.rs` in this
          repository repairs that, and needs no help here.
 
-    The engine links a FORK of EasyTier, pinned by tag. See Cargo.toml.
+    The engine links a FORK of EasyTier, following its kanpachi branch; Cargo.lock pins the commit. See Cargo.toml.
 
 .PARAMETER Stage
     Copies the built binary here next to its runtime DLLs. Empty skips it.
