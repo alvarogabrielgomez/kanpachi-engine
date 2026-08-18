@@ -70,9 +70,15 @@ command -v protoc >/dev/null || falta "protoc, que necesitan las definiciones de
 bien "protoc: $(protoc --version)"
 
 # libclang no está en un sitio fijo: cada versión de LLVM trae la suya. Se busca
-# la más nueva en vez de escribir una ruta que caduca con el próximo Ubuntu.
-libclang="$(ls -d /usr/lib/llvm-*/lib 2>/dev/null | sort -V | tail -1 || true)"
-[ -n "$libclang" ] && [ -e "$libclang/libclang.so" ] || falta "libclang, que necesita kcp-sys" \
+# la más nueva DE LAS QUE TIENEN el fichero, en vez de la más nueva a secas:
+# una máquina con varios LLVM instalados —el runner de GitHub trae cuatro—
+# tiene el libclang.so solo en la versión que instaló libclang-dev, y elegir
+# por nombre reventaba justo ahí, con el fichero presente dos directorios más
+# abajo. Medido en la primera corrida de release.yml que llamó a este script.
+libclang="$(for d in /usr/lib/llvm-*/lib; do
+	[ -e "$d/libclang.so" ] && echo "$d"
+done 2>/dev/null | sort -V | tail -1 || true)"
+[ -n "$libclang" ] || falta "libclang, que necesita kcp-sys" \
 	"Instalalo con: sudo apt install libclang-dev"
 bien "libclang: $libclang"
 
