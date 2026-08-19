@@ -15,6 +15,10 @@ on:
 jobs:
   windows:
     runs-on: windows-latest
+    # Its own build takes ~20 min. A job that goes past this is stuck, not
+    # slow, and the point of a ceiling is to say so instead of holding a
+    # runner for the six hours GitHub gives by default.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -119,6 +123,8 @@ jobs:
   # scripts/build-linux.sh.
   linux:
     runs-on: ubuntu-22.04
+    # Its own build takes ~9 min. See the ceiling on the windows job.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -138,10 +144,23 @@ jobs:
       # that EasyTier declares as a NON-optional Linux dependency with
       # features = ["vendored"], so it compiles libdbus from source whether or
       # not magic-dns is on.
+      #
+      # It asks apt twice because a mirror that goes quiet is the failure this
+      # step actually has: it hung 26 minutes here once, on the same packages
+      # that had installed in under a minute twice that hour. `-o Acquire`
+      # puts a ceiling on each attempt so a dead mirror errors instead of
+      # waiting, and NEEDRESTART_MODE keeps the post-install prompt from
+      # opening a dialog nobody is there to answer.
       - name: what the Rust chain needs
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          NEEDRESTART_MODE: a
         run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libclang-dev build-essential pkg-config
+          apt_try() {
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 "$@"
+          }
+          apt_try update || { sleep 15; apt_try update; }
+          apt_try install -y protobuf-compiler libclang-dev build-essential pkg-config
 
       - name: rust
         run: |
