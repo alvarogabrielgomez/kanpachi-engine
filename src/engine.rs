@@ -411,6 +411,7 @@ impl Engine {
             // the reply, which is the daemon's job and not the engine's.
             mtu: self.room_mtu,
             engine_build: crate::build_id::BUILD.to_string(),
+            engine_lib: crate::build_id::LIB.to_string(),
         })
     }
 

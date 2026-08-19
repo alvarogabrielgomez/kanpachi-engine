@@ -23,3 +23,13 @@ pub const BUILD_MARK: &str = concat!(
     env!("KANPACHI_ENGINE_BUILD"),
     "}"
 );
+
+/// The library this engine wraps, as the lock resolved it:
+/// `easytier@v2.6.4-kanpachi.1`. Its own sentinel, separate from the build's,
+/// because they answer different questions: BUILD says which engine code,
+/// LIB says which network stack is inside it.
+pub const LIB: &str = env!("KANPACHI_ENGINE_LIB");
+
+/// The library sentinel, findable inside the compiled file:
+/// `KANPACHI-ENGINE-LIB{easytier@v2.6.4-kanpachi.1}`.
+pub const LIB_MARK: &str = concat!("KANPACHI-ENGINE-LIB{", env!("KANPACHI_ENGINE_LIB"), "}");

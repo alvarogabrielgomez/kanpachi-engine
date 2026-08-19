@@ -239,7 +239,54 @@ fn build_id() -> String {
 
     let build = format!("{version}+{provenance}");
     println!("cargo:rustc-env=KANPACHI_ENGINE_BUILD={build}");
+
+    // The LIBRARY the engine wraps, read off Cargo.lock because the lock IS
+    // the pin: the tag in Cargo.toml is what was asked for, the lock is what
+    // was resolved, and the honest answer names the resolved one. With
+    // --locked on every build the two cannot drift, and this stays true.
+    println!("cargo:rerun-if-changed=Cargo.lock");
+    println!("cargo:rustc-env=KANPACHI_ENGINE_LIB={}", engine_lib());
+
     build
+}
+
+/// engine_lib names the easytier the binary embeds: `easytier@<tag>` when the
+/// lock records a tag source, `easytier@<version>` otherwise, and
+/// `easytier@unknown` if the lock cannot be read — never a guess.
+fn engine_lib() -> String {
+    let Ok(lock) = fs::read_to_string("Cargo.lock") else {
+        return String::from("easytier@unknown");
+    };
+    let mut version = None;
+    let mut tag = None;
+    let mut in_easytier = false;
+    for line in lock.lines() {
+        let line = line.trim();
+        if line == "[[package]]" {
+            if version.is_some() {
+                break;
+            }
+            in_easytier = false;
+        }
+        if line == "name = \"easytier\"" {
+            in_easytier = true;
+        }
+        if in_easytier {
+            if let Some(v) = line.strip_prefix("version = \"") {
+                version = v.strip_suffix('"').map(str::to_string);
+            }
+            if let Some(src) = line.strip_prefix("source = \"") {
+                if let Some(t) = src.split("tag=").nth(1) {
+                    tag = t.split(['#', '&', '"']).next().map(str::to_string);
+                }
+            }
+        }
+    }
+    match (tag, version) {
+        (Some(t), _) => format!("easytier@{t}"),
+        (None, Some(v)) => format!("easytier@{v}"),
+        (None, None) => String::from("easytier@unknown"),
+    }
 }
 
 /// git_provenance asks git where HEAD is, for the desktop build.

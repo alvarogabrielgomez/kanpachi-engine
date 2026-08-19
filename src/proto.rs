@@ -300,6 +300,8 @@ pub struct DiagnosticsOut {
     /// can have been replaced since it started. Same value as the startup
     /// banner; see `build_id::BUILD`.
     pub engine_build: String,
+    /// The library inside it, as the lock resolved it. See `build_id::LIB`.
+    pub engine_lib: String,
 }
 
 /// Pushed by the engine, with no request behind it.
