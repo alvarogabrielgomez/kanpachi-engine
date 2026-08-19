@@ -190,6 +190,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: out
@@ -202,17 +204,37 @@ jobs:
           sha256sum kanpachi-engine.exe kanpachi-engine > SHA256SUMS-engine
           cat SHA256SUMS-engine
 
+      # The release body quotes the changelog section verbatim, which is why
+      # the changelog is written in English. An empty section fails the
+      # publish on purpose: a release with nothing to say about itself is a
+      # release whose changelog was forgotten.
+      - name: release notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$version" '
+            $0 ~ "^## \\[" ver "\\]" { grab=1; next }
+            grab && /^## /           { grab=0 }
+            grab                     { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "CHANGELOG.md has no section for $version. Cut it in the tagged commit." >&2
+            exit 1
+          fi
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "Built from \`${GITHUB_SHA}\`. Consumed by Kanpachi's release through its"
+            echo "\`engine.pin\`; not meant to be downloaded by hand. Each binary carries its"
+            echo "build id in a \`KANPACHI-ENGINE-BUILD-ID{...}\` sentinel readable off the file."
+          } >> notes.md
+
       - name: publish
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          body: |
-            Kanpachi engine ${{ github.ref_name }}, built from `${{ github.sha }}`.
-
-            Consumed by Kanpachi's release through its `engine.pin`; not meant
-            to be downloaded by hand. Each binary carries its build id in a
-            `KANPACHI-ENGINE-BUILD-ID{...}` sentinel readable off the file.
+          body_path: notes.md
           files: |
             out/kanpachi-engine.exe
             out/kanpachi-engine
