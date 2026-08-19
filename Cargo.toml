@@ -6,8 +6,9 @@ license = "LGPL-3.0-or-later"
 description = "Kanpachi's network engine: EasyTier as a library, with no administration portal"
 repository = "https://github.com/alvarogabrielgomez/kanpachi-engine"
 
-# The dependency is a FORK of EasyTier, following its `kanpachi` branch, with
-# Cargo.lock as the only authority on which commit gets built.
+# The dependency is a FORK of EasyTier, pinned to the tag `v2.6.4-kanpachi.1`.
+# `Cargo.lock` records the commit that tag resolved to, and `--locked` on every
+# build makes it binding.
 #
 # The fork exists for one reason, and it is measured. Upstream writes permanent
 # Windows Firewall ALLOW rules from inside `NetworkInstance::start()`: one that
@@ -29,18 +30,13 @@ repository = "https://github.com/alvarogabrielgomez/kanpachi-engine"
 # fork's own FORK.md, and the claim is meant to be checked rather than
 # believed:
 #
-#     git diff v2.6.4 kanpachi -- '*.rs' '*.proto'
+#     git diff v2.6.4 v2.6.4-kanpachi.1 -- "*.rs" "*.proto"
 #
-# A branch on the fork, and the asymmetry against upstream is the point. Pointing
-# at upstream `main` would break the build on somebody else's commit at a moment
-# nobody chose: the `launcher` and `instance_manager` modules are already gone
-# there, because the whole RPC tree was deleted and reborn elsewhere. The
-# `kanpachi` branch is ours and nobody else moves it, so that objection does not
-# carry over, and `Cargo.lock` is what records which commit this actually builds.
+# The fork, and never upstream `main`. Pointing there would break the build on
+# somebody else's commit at a moment nobody chose: the `launcher` and
+# `instance_manager` modules are already gone there, because upstream deleted
+# the whole RPC tree and rebuilt it elsewhere.
 #
-# It is a branch rather than a versioned tag because the engine is not versioned
-# yet. Kanpachi is at v0, and a tag per patch set buys a number nobody reads at
-# the price of force-pushing it every time the fork moves.
 # Features chosen on purpose, and the choosing is a security measure rather
 # than a size one.
 #

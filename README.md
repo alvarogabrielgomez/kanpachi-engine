@@ -4,38 +4,14 @@ Part of **[Kanpachi Protection](https://github.com/alvarogabrielgomez/kanpachi/b
 *everything the game did not ask for is closed on the virtual adapter.*
 
 This is the network engine of
-[Kanpachi](https://github.com/alvarogabrielgomez/kanpachi): a small
-binary that builds the encrypted peer-to-peer network and **listens on nothing**.
+[Kanpachi](https://github.com/alvarogabrielgomez/kanpachi): a small binary,
+Windows and Linux, that builds the encrypted peer-to-peer network and **listens
+on nothing**.
 
-Its share of that promise is narrow and worth stating plainly. **The engine
-decides nothing.** It moves packets. What may be reached is decided and written
-by the daemon, so a compromise of this binary cannot open the machine, and this
-binary offers no way to be told otherwise.
-
-It is built on
-[kanpachi/EasyTier](https://github.com/alvarogabrielgomez/EasyTier), Kanpachi's
-fork of [EasyTier](https://github.com/EasyTier/EasyTier). Upstream
-unconditionally writes Windows Firewall rules that open the virtual adapter, and
-the fork removes those two calls.
-[Why, in detail.](#the-firewall-and-why-the-dependency-is-a-fork)
-
-**It follows the fork's `kanpachi` branch, which MOVES.** That is deliberate:
-the fork is not versioned, Kanpachi is at v0, and a tag per patch set would buy
-a number nobody reads at the price of force-pushing it every time the fork
-changes. What records the exact commit this builds is `Cargo.lock`, and that is
-the file to read when the question is "which EasyTier is this".
-
-**To pin instead of follow, point at a tag.** There is one,
-[`v2.6.4-kanpachi`](https://github.com/alvarogabrielgomez/EasyTier/tree/v2.6.4-kanpachi),
-a snapshot of the branch:
-
-```toml
-easytier = { git = "https://github.com/alvarogabrielgomez/EasyTier", tag = "v2.6.4-kanpachi", ... }
-```
-
-A tag is a snapshot and never moves. When the fork changes and somebody needs a
-pin at the new point, that is the moment to cut a tag for it and to decide how
-to name the series. Deciding it now costs a naming scheme and buys nothing.
+Its share of that promise is narrow. **The engine decides nothing.** It moves
+packets. The daemon decides what may be reached and writes it, so a compromise
+of this binary cannot open the machine, and this binary offers no way to be told
+otherwise.
 
 It takes commands on stdin and writes answers and events on stdout. It has no
 port, no named pipe, no config file, and it accepts no command-line arguments at
@@ -49,48 +25,50 @@ authentication of any kind**, and its default binds every interface:
 | Process | Listening TCP sockets |
 |---|---|
 | `easytier-core.exe` v2.6.4 | `0.0.0.0:15888` |
-| `kanpachi-engine.exe` | none |
+| `kanpachi-engine` | none |
 
 Through that portal any local process can issue credentials for the network, add
-peers, forward ports, and ask for the network secret in cleartext. Authentication
-was requested upstream in issue #925 and deliberately declined in PR #929, in
-favour of an IP allowlist that filters *after* accept and whose default already
-includes `127.0.0.0/8`, which is no barrier to another process on the same
-machine.
+peers, forward ports, and ask for the network secret in cleartext. Somebody
+asked upstream for authentication in issue #925, and upstream declined it in PR
+#929 in favour of an IP allowlist that filters *after* accept and whose default
+already includes `127.0.0.0/8`, which is no barrier to another process on the
+same machine.
 
-**The portal is not part of the library.** `ApiRpcServer::new` is constructed in
-exactly one place in the whole tree, inside upstream's command-line binary. A
-program that drives the library and never writes that line does not get a portal.
-There is no flag to forget:
+**The portal is built in one place, and nothing this program calls can reach
+it.** A **private** function, `run_main`, constructs `ApiRpcServer::new`. The
+only public function of that whole module is `core::main`, the command-line
+entry point that parses `argv` and returns an `ExitCode`. This engine drives the
+library through `launcher::NetworkInstance` and never names `core` at all:
 
 ```
-easytier/src/core.rs:1340   ApiRpcServer::new(...)   ← the CLI, and nowhere else
-easytier/src/launcher.rs                            ← no matches
+easytier/src/core.rs:1343   ApiRpcServer::new(...)   <- inside private run_main
+easytier/src/core.rs:1549   pub async fn main()      <- the CLI entry, its only way in
+grep -rn "::core::" src/                             <- no matches here
 ```
 
-So this repository is not a patch or a wrapper. It is a different program that
-uses the same library, written so that the capability is absent rather than
-turned off.
+This repository holds a different program that uses the same library, written so
+that the capability is unreachable rather than turned off. It is not a patch,
+and it is not a wrapper.
 
-## What it deliberately cannot do
+## What it cannot do
 
 Some of these are configuration, and some are the absence of code. The
 difference matters: a flag can be flipped at runtime, and a missing feature
 cannot.
 
-**Removed from the binary** (cargo features left out, so the code is not
-compiled in):
+**Removed from the binary**, the four defaults left out by
+`default-features = false`, so the code is not compiled in:
 
 | Capability | Why |
 |---|---|
-| `magic-dns` | Rewrites the machine's DNS and opens a loopback socket. That socket is exactly what an early "does this thing listen" measurement missed, because it ran with `no_tun` |
+| `magic-dns` | Rewrites the machine's DNS and opens a loopback socket. That socket is what an early "does this thing listen" measurement missed, because it ran with `no_tun` |
 | `socks5` | A proxy into the virtual network |
 | `wireguard` | `boringtun`, which exists to serve a VPN portal. Not the tunnel encryption, which stays |
 | `faketcp` | A transport nothing here asks for |
 
-**Stated explicitly in the configuration**, including the ones whose upstream
-default already matches, so that a default changing upstream cannot switch a
-forbidden capability on without somebody writing it here:
+**Written into the configuration**, including the ones whose upstream default
+already matches, so that a default changing upstream cannot switch a forbidden
+capability on without somebody writing it here:
 
 ```
 disable_upnp               true    the user's router is never touched
@@ -101,15 +79,14 @@ private_mode               true    refuses peers from other networks
 listeners                  empty   the client never listens on a public port
 mapped_listeners           none    publishing reachable addresses is listening
 exit_nodes, proxy_cidrs    empty   no subnet routing
-socks5_portal              none
-port_forwards              empty
-credential_file            none    credentials stay in memory, never on disk
+socks5_portal, port_forwards, credential_file    none
 ```
 
-**Still in the binary and worth naming:** `windivert`, the packet-capture
-driver, is an unconditional dependency on Windows x86 and x86_64. No combination
-of cargo features removes it. That is precisely why Kanpachi's containment rests
-on the firewall rather than on this engine being incapable.
+**Still in the binary:** `windivert`, the packet-capture driver, is an
+unconditional dependency on Windows x86 and x86_64, and no combination of cargo
+features removes it. Kanpachi's containment therefore rests on the firewall and
+not on this engine being incapable. On Linux it is not in the dependency graph
+at all.
 
 ### The firewall, and why the dependency is a fork
 
@@ -134,16 +111,23 @@ pushes a credential's expiry forward without reissuing it. Removing the two is
 safe: upstream already treated the failure of both as non-fatal, logging a
 warning and continuing.
 
+**It is pinned to the tag**
+[`v2.6.4-kanpachi.1`](https://github.com/alvarogabrielgomez/EasyTier/tree/v2.6.4-kanpachi.1).
+A tag holds still where a branch would move under the build. `Cargo.lock`
+records the commit it resolved to, and every build here passes `--locked`, so a
+stale lock fails the build instead of regenerating itself in silence. To move to
+a newer fork, cut the next tag in the series and write it down here.
+
 The claim is meant to be checked rather than believed, and that is also why the
 engine lives in its own repository instead of inside the fork:
 
 ```
-git diff v2.6.4 kanpachi -- '*.rs' '*.proto'
+git diff v2.6.4 v2.6.4-kanpachi.1 -- "*.rs" "*.proto"
 ```
 
-See the fork's
-[FORK.md](https://github.com/alvarogabrielgomez/EasyTier/blob/kanpachi/FORK.md),
-which carries the changelog against upstream.
+The fork's
+[FORK.md](https://github.com/alvarogabrielgomez/EasyTier/blob/kanpachi/FORK.md)
+carries the changelog against upstream.
 
 ## The command channel
 
@@ -154,108 +138,117 @@ That is not a promise this code keeps by being careful; it is what the operating
 system enforces. The pipes are **anonymous**: no name, no path, no address.
 Connecting to them is not forbidden, it is an operation that does not exist. The
 two ends live as handles inside the daemon and inside this process. A port or a
-named pipe would be doors, a door needs a lock, and a lock can be written
-wrongly, which is what happened to port 15888.
+named pipe would be doors, a door needs a lock, and somebody has to write that
+lock right. On port 15888 nobody did. Running the binary by hand starts a
+*different*, empty instance whose stdin is the terminal of whoever launched it:
+it knows no room's secret and touches no other instance's tunnels.
 
-Running `kanpachi-engine.exe` by hand starts a *different*, empty instance whose
-stdin is the terminal of whoever launched it. It knows no room's secret and
-touches no other instance's tunnels.
-
-### The shape
-
-One JSON object per line, both directions. Three kinds of message and no others:
-
-| Kind | Has `id` |
-|---|---|
-| Request, daemon to engine | yes |
-| Response, engine to daemon | yes, the same one |
-| Event, engine to daemon, unsolicited | **no** |
-
-The absence of an `id` is what tells a response from an event, so nothing is
-guessed from the payload. Decoding is **strict**: an unknown field rejects the
-whole message rather than being dropped.
+One JSON object per line, both directions, and three kinds of message with no
+others: a request from the daemon and its response both carry the same `id`, and
+an unsolicited event carries none. That absence is what tells them apart, so
+nothing is guessed from the payload. Decoding is **strict**: an unknown field
+rejects the whole message rather than being dropped.
 
 ```jsonc
-→ {"id":1,"cmd":{"host":{"common":{"dev_name":"kanpachi0","hostname":"alvaro",
-                 "peers":["tcp://203.0.113.9:11010"]},
-                 "network_name":"kanpachi-a1b2","network_secret":"9f3a…",
-                 "ipv4":"100.87.4.1/24"}}}
-← {"id":1,"ok":true}
-← {"event":"peers_changed","reason":"somebody joined"}
-→ {"id":2,"cmd":{"issue_credential":{"ttl_seconds":3600}}}
-← {"id":2,"ok":true,"data":{"credential":{"credential_id":"…","credential_secret":"…"}}}
-→ {"id":3,"cmd":{"leave":{}}}
+-> {"id":1,"cmd":{"host":{"common":{"dev_name":"kanpachi0", ...}, ...}}}
+<- {"id":1,"ok":true}
+<- {"event":"peers_changed","reason":"somebody joined"}
+-> {"id":2,"cmd":{"issue_credential":{"ttl_seconds":3600}}}
+<- {"id":2,"ok":true,"data":{"credential":{"credential_id":"...", ...}}}
 ```
 
 Commands: `host`, `join_rendezvous`, `leave_rendezvous`, `join`, `leave`,
 `issue_credential`, `renew_credential`, `revoke_credential`, `list_credentials`,
-`peers`, `diagnostics`.
-
-`renew_credential` pushes an existing credential's expiry to `now + ttl` and
-**keeps its keypair**, which is the whole point: the credential secret is the
-holder's Noise static key, so reissuing would make it a different peer that has
-to be re-trusted and loses its session. It answers with the new `expiry_unix`
-rather than letting the caller compute it, so the deadline the engine enforces
-and the one the daemon believes are the same number.
+`peers`, `diagnostics`. Their exact arguments are the types in
+[`src/proto.rs`](src/proto.rs), which is the only authority on the wire format.
 
 Events: `connected`, `peers_changed`, `degraded`, `disconnected`. There is no
 `died`: a process cannot report its own death, so the daemon raises that one
-when the child exits.
-
-**Closing stdin shuts the engine down**, cleanly and on purpose. That is the
+when the child exits. **Closing stdin shuts the engine down**, which is the
 normal way to stop it.
 
 ### Two networks at once
 
-The host lives in two networks simultaneously: the room, and a public, throwaway
-lobby that anyone holding the invite code can derive. They are two separate
+The host lives in both: the room, and a public, throwaway lobby that anyone
+holding the invite code can derive. They are two separate
 network instances with two adapters, `kanpachi0` and `kanpachi1`, so that
 `leave_rendezvous` can drop the lobby while the room stays up.
 
-The adapter names are chosen by the daemon and sent in each command. The
-firewall gate is scoped to an adapter **by name**, so the side that writes the
-firewall has to be the side that names the adapter; an engine picking its own
-name could hand back one the gate does not cover.
+The adapter names are chosen by the daemon and sent in each command, because the
+firewall gate is scoped to an adapter **by name**: the side that writes the
+firewall has to be the side that names the adapter, or the engine could hand
+back one the gate does not cover.
+
+## Which engine is this
+
+Every build seals its own identity into the file, so the question can be
+answered without running the binary and without trusting a filename:
+
+```
+KANPACHI-ENGINE-BUILD-ID{0.1.0+g<commit>}
+KANPACHI-ENGINE-LIB{easytier@v2.6.4-kanpachi.1}
+```
+
+Both are greppable off the file on either platform, and the same values reach
+the startup banner on stderr, the Windows `ProductVersion`, and the
+`engine_build` and `engine_lib` fields of the `diagnostics` response, which name
+the **running process** rather than a file on disk. A build that cannot know its
+commit says `unknown` instead of guessing, and a build from a dirty tree says
+so.
+
+A `v*` tag runs the full checks on **both** platforms and publishes the binaries
+that passed, never a recompilation of the same commit somewhere else.
+Each release carries `kanpachi-engine.exe`, `kanpachi-engine` and
+`SHA256SUMS-engine`, and quotes its [CHANGELOG.md](CHANGELOG.md) section as the
+release body, which is why the changelog is in English. A version with an empty
+section fails the publish on purpose, and a tag that does not match `version` in
+`Cargo.toml` stops the run before anything is built.
+
+Kanpachi consumes this through its own `engine.pin`, which records the tag and
+both SHA256s and refuses to package anything that does not match. The consumer,
+not this repository, decides when to adopt a new engine.
 
 ## Building
 
-Windows only, x86_64, MSVC toolchain. Rust is pinned by `rust-toolchain.toml` to
-the version upstream EasyTier builds with.
+Each artifact is built **on** the system it runs on. There is no cross-compile
+in either direction, which is why there are two scripts and no flag joining
+them. Rust is pinned by `rust-toolchain.toml` to the version upstream EasyTier
+builds with.
 
 ```powershell
-.\scripts\build.ps1                     # builds into C:\kt
-.\scripts\build.ps1 -Stage C:\kt\stage  # and copies the binary next to its DLLs
+.\scripts\build.ps1 -Stage C:\kt\stage  # builds into C:\kt, stages next to its DLLs
 ```
 
-The script exists because this dependency tree fails in six different ways on a
-machine that has everything installed and nothing exported, and each failure
-names something other than the real cause. It locates and sets up MSVC
-(`vcvars64`), `protoc`, `libclang` for `kcp-sys`, and 7-Zip for `thunk-rs`, puts
-the target directory somewhere short because `cl.exe` is not long-path aware,
-and says which tool is missing instead of letting the compiler guess. A cold
-build takes roughly twenty minutes.
+```bash
+scripts/build-linux.sh --stage ./out    # target dir under $HOME/.cache
+```
 
-`build.rs` in this repository repairs one more trap: the library's own build script
-emits a **relative** link search path for `Packet.lib`, which resolves against
-the consuming package and therefore fails to link. This one points the linker at
-the copy cargo already unpacked, rather than committing a third-party binary
-here.
+Use the scripts. This dependency tree fails in several ways on a machine that
+has everything installed and nothing exported, and each failure names something
+other than the real cause; the scripts set up what is needed and say which tool
+is missing instead of letting the compiler guess. Each one documents its own
+traps in its header.
 
-### Runtime files
+**The published Linux binary is built on Ubuntu 22.04 on purpose.** The glibc it
+links against is the floor of what can run it, and 22.04 is what a VPS most
+often has. Building on 24.04 produces a binary that does not start there.
 
-These must sit next to the executable. They are not built here and not
-redistributed by this repository; see [NOTICE.md](NOTICE.md).
+### What it needs at runtime
 
-| File | Note |
-|---|---|
-| `Packet.dll` | **A hard import.** Without it the process does not start, and Windows only says `0xC0000135` without naming what is missing |
-| `wintun.dll` | The virtual adapter, loaded at runtime |
-| `WinDivert64.sys` | Pulled in by the `windivert` dependency |
+On **Windows**, `Packet.dll`, `wintun.dll` and `WinDivert64.sys` must sit next to
+the executable. They are not built here and not redistributed by this
+repository; [NOTICE.md](NOTICE.md) says where each comes from and under what
+terms. Without `Packet.dll` the process does not start, and Windows only says
+`0xC0000135` without naming what is missing.
 
-Creating a virtual adapter is privileged, so the engine runs elevated. In
-Kanpachi it is a child of a service running as SYSTEM, inside a Job Object with
-`KILL_ON_JOB_CLOSE`, so that a daemon dying without running any cleanup still
-takes the engine and its network down with it.
+On **Linux**, nothing sits beside it. The adapter comes from `/dev/net/tun`, and
+addresses and routes are programmed over netlink, so what it needs is the
+`CAP_NET_ADMIN` capability, which Kanpachi's systemd unit grants.
+
+Creating a virtual adapter is privileged on both. In Kanpachi the engine is a
+child of a service running as SYSTEM or as root; on Windows it also lives inside
+a Job Object with `KILL_ON_JOB_CLOSE`, so that a daemon dying without running
+any cleanup still takes the engine and its network down with it.
 
 ## Licence
 
