@@ -67,8 +67,14 @@ repository = "https://github.com/alvarogabrielgomez/kanpachi-engine"
 # an unconditional dependency, so no combination of features removes the
 # packet-capture driver from the binary. That is why the product's containment
 # rests on the firewall and not on the engine being incapable.
+# By TAG and not by branch, since 2026-08-19. The real pin was always
+# Cargo.lock, which records the exact commit; what the tag adds is durability
+# and a name: a branch can be force-pushed or deleted and the locked commit
+# with it, while a tag names the commit forever and `--locked` (now on every
+# build) refuses silent drift. Moving to a new fork commit is: tag it there,
+# change this line, regenerate the lock, one commit.
 [dependencies]
-easytier = { git = "https://github.com/alvarogabrielgomez/EasyTier", branch = "kanpachi", default-features = false, features = [
+easytier = { git = "https://github.com/alvarogabrielgomez/EasyTier", tag = "v2.6.4-kanpachi.1", default-features = false, features = [
     "tun",
     "websocket",
     "smoltcp",

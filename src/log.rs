@@ -34,10 +34,10 @@ use std::sync::Once;
 use easytier::common::get_logger_timer_rfc3339;
 use easytier::common::tracing_rolling_appender::{FileAppenderWrapper, RollingFileAppenderBase};
 use tracing_subscriber::filter::LevelFilter;
-use tracing_subscriber::{Layer, Registry};
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{Layer, Registry};
 
 /// The log's name, next to the daemon's own `kanpachi.log`.
 ///
@@ -353,4 +353,3 @@ fn espacios(s: &str) -> usize {
 fn contiene(heno: &[u8], aguja: &[u8]) -> bool {
     heno.windows(aguja.len()).any(|w| w == aguja)
 }
-

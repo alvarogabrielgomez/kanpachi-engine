@@ -23,8 +23,8 @@
 
 use anyhow::Context;
 use easytier::common::config::{
-    ConfigLoader, Flags, NetworkIdentity, PeerConfig, TomlConfigLoader, gen_default_flags,
-    process_secure_mode_cfg,
+    gen_default_flags, process_secure_mode_cfg, ConfigLoader, Flags, NetworkIdentity, PeerConfig,
+    TomlConfigLoader,
 };
 use easytier::proto::common::SecureModeConfig;
 
@@ -86,7 +86,10 @@ fn base(common: &Common) -> anyhow::Result<TomlConfigLoader> {
         // The daemon resolved and checked these. A bare name here would be
         // resolved again inside EasyTier, and that check would govern nothing.
         let uri = url::Url::parse(p).with_context(|| format!("seed address {p:?} is not a URL"))?;
-        peers.push(PeerConfig { uri, peer_public_key: None });
+        peers.push(PeerConfig {
+            uri,
+            peer_public_key: None,
+        });
     }
     cfg.set_peers(peers);
 
@@ -146,7 +149,10 @@ pub fn host(args: &HostArgs) -> anyhow::Result<TomlConfigLoader> {
         args.network_secret.clone(),
     ));
     cfg.set_ipv4(Some(args.ipv4.parse().with_context(|| {
-        format!("room address {:?} is not an address with a prefix", args.ipv4)
+        format!(
+            "room address {:?} is not an address with a prefix",
+            args.ipv4
+        )
     })?));
     cfg.set_dhcp(false);
     Ok(cfg)
@@ -168,7 +174,10 @@ pub fn rendezvous(args: &RendezvousArgs) -> anyhow::Result<TomlConfigLoader> {
         args.network_secret.clone(),
     ));
     cfg.set_ipv4(Some(args.ipv4.parse().with_context(|| {
-        format!("lobby address {:?} is not an address with a prefix", args.ipv4)
+        format!(
+            "lobby address {:?} is not an address with a prefix",
+            args.ipv4
+        )
     })?));
     cfg.set_dhcp(false);
     Ok(cfg)
@@ -210,7 +219,10 @@ pub fn guest(args: &GuestArgs) -> anyhow::Result<TomlConfigLoader> {
     let cfg = base(&args.common)?;
     cfg.set_network_identity(NetworkIdentity::new_credential(args.network_name.clone()));
     cfg.set_ipv4(Some(args.ipv4.parse().with_context(|| {
-        format!("guest address {:?} is not an address with a prefix", args.ipv4)
+        format!(
+            "guest address {:?} is not an address with a prefix",
+            args.ipv4
+        )
     })?));
     cfg.set_dhcp(false);
     cfg.set_secure_mode(Some(

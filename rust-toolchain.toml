@@ -6,6 +6,14 @@
 # whatever is installed on the machine.
 [toolchain]
 channel = "1.95"
+# Without this line rustup installs the pinned channel BARE, and the CI's
+# clippy step dies with "cargo-clippy.exe is not installed" — which is exactly
+# what happened: three consecutive engine commits shipped inside a Kanpachi
+# installer with every gate red, because the gate could not even start. The
+# fix lives here and not as a `rustup component add` in the workflow, because
+# this file is, by the decision written above, the only place the toolchain is
+# changed.
+components = ["clippy", "rustfmt"]
 # Los dos objetivos, y cada artefacto se compila EN su sistema.
 #
 # Que estén los dos acá no habilita el cross-compile y no pretende habilitarlo:

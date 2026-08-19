@@ -101,7 +101,10 @@ try {
         & cargo clean
         if ($LASTEXITCODE -ne 0) { throw "cargo clean salio con $LASTEXITCODE" }
     }
-    & cargo build --release
+    # --locked: el lock ES el pin de easytier (graba el commit exacto del fork).
+    # Sin la bandera, un lock desfasado se regenera en silencio y el binario
+    # sale de un commit que nadie escribió en ningún sitio.
+    & cargo build --locked --release
     if ($LASTEXITCODE -ne 0) { throw "cargo build salio con $LASTEXITCODE" }
 }
 finally {

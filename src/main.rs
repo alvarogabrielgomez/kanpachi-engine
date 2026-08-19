@@ -30,6 +30,7 @@
 //! hand starts a second, empty instance that knows no room's secret and touches
 //! no tunnel of the daemon's.
 
+mod build_id;
 mod config;
 mod engine;
 mod log;
@@ -61,6 +62,13 @@ async fn main() -> std::process::ExitCode {
     // the log file gets. See [log::install_panic_hook].
     log::install_panic_hook();
 
+    // The first line this process ever says is what it IS. It lands in
+    // kanpachi-engine.log, which is the file people paste into a chat, so
+    // "which engine is this" stops being a question with no place to look.
+    // The sentinel form on purpose: referencing BUILD_MARK here is also what
+    // keeps the linker from discarding it, and that is what lets the same id
+    // be read off the FILE without running it — Linux has no VERSIONINFO.
+    eprintln!("kanpachi-engine {}", build_id::BUILD_MARK);
 
     // No arguments, ever. Every knob this engine has arrives over stdin from
     // the process that created it, so an argument can only be somebody trying

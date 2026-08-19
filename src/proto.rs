@@ -214,15 +214,30 @@ pub struct Response {
 
 impl Response {
     pub fn ok(id: u64) -> Self {
-        Response { id, ok: true, error: None, data: None }
+        Response {
+            id,
+            ok: true,
+            error: None,
+            data: None,
+        }
     }
 
     pub fn with(id: u64, data: Data) -> Self {
-        Response { id, ok: true, error: None, data: Some(data) }
+        Response {
+            id,
+            ok: true,
+            error: None,
+            data: Some(data),
+        }
     }
 
     pub fn failed(id: u64, err: impl std::fmt::Display) -> Self {
-        Response { id, ok: false, error: Some(err.to_string()), data: None }
+        Response {
+            id,
+            ok: false,
+            error: Some(err.to_string()),
+            data: None,
+        }
     }
 }
 
@@ -281,6 +296,10 @@ pub struct DiagnosticsOut {
     pub public_ips: Vec<String>,
     pub virtual_ip: String,
     pub mtu: u32,
+    /// Which engine THIS PROCESS is, as opposed to the file on disk, which
+    /// can have been replaced since it started. Same value as the startup
+    /// banner; see `build_id::BUILD`.
+    pub engine_build: String,
 }
 
 /// Pushed by the engine, with no request behind it.
@@ -308,7 +327,10 @@ pub struct Event {
 
 impl Event {
     pub fn new(event: EventKind, reason: impl Into<String>) -> Self {
-        Event { event, reason: Some(reason.into()) }
+        Event {
+            event,
+            reason: Some(reason.into()),
+        }
     }
 }
 

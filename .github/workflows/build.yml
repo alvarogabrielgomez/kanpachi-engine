@@ -1,18 +1,34 @@
 name: build
 
+# Two triggers, two meanings. A push or PR is the CUSTOMS CHECK: does this code
+# get to travel. A `v*` tag is a RELEASE: the same checks, on both platforms,
+# and then the binaries that PASSED them are published — so the artefact
+# Kanpachi downloads is the artefact that was checked, not a second compilation
+# of hopefully the same commit. Kanpachi pins the tag in its `engine.pin` and
+# verifies the SHA256SUMS this workflow writes.
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
 
-# The engine is Windows-only. The client of Kanpachi is Windows-only, and the
-# TUN adapter, the packet-capture driver and the MSVC link step all are too, so
-# a Linux job here would prove nothing about the artefact that ships.
 jobs:
   windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      # On a tag, the tag and Cargo.toml must agree BEFORE anything is spent
+      # compiling: a v0.2.0 whose Cargo.toml says 0.1.0 would stamp every
+      # binary with a version that contradicts its own file name.
+      - name: tag matches Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart("v")
+          $toml = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ($tag -ne $toml) { throw "tag v$tag but Cargo.toml says $toml. Bump Cargo.toml (and regenerate Cargo.lock) in the tagged commit." }
+          Write-Host "tag v$tag == Cargo.toml $toml"
 
       # Sets up cl.exe and link.exe. Without it the native build scripts in the
       # dependency tree (zstd-sys, kcp-sys, windivert) have no compiler.
@@ -37,17 +53,31 @@ jobs:
       - name: libclang
         run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
 
+      # --locked: Cargo.lock IS the pin of the easytier fork. Without the flag
+      # a stale lock regenerates silently and the binary comes out of a commit
+      # nobody wrote down anywhere.
+      #
+      # KANPACHI_ENGINE_BUILD_REF seals the resolved commit into the binary as
+      # its build id; see build.rs. The banner, the VERSIONINFO and the
+      # in-file sentinel all carry it, which is what lets anybody holding the
+      # file answer "which engine is this".
       - name: build
-        run: cargo build --release
+        env:
+          KANPACHI_ENGINE_BUILD_REF: ${{ github.sha }}
+        run: cargo build --locked --release
 
       - name: clippy
-        run: cargo clippy --all-targets -- -D warnings
+        env:
+          KANPACHI_ENGINE_BUILD_REF: ${{ github.sha }}
+        run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: fmt
         run: cargo fmt --check
 
       - name: test
-        run: cargo test --release
+        env:
+          KANPACHI_ENGINE_BUILD_REF: ${{ github.sha }}
+        run: cargo test --locked --release
 
       # The invariant that justifies this binary existing at all: it must not
       # listen anywhere. Enforced two ways, because they fail differently.
@@ -69,3 +99,121 @@ jobs:
             throw "the engine has exactly one command input, stdin. A second channel rebuilds the unauthenticated portal under another name."
           }
           Write-Host "no listener constructed in src/"
+
+      - name: keep the binary for publishing
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-windows
+          path: target/release/kanpachi-engine.exe
+          if-no-files-found: error
+
+  # The Linux half of the same customs check. It did not exist until
+  # 2026-08-19, which meant the engine inside every published .deb had never
+  # been checked by anything: no clippy, no tests, no socket test.
+  #
+  # ubuntu-22.04 and not -latest, and it is a shipping decision, not a
+  # preference: the binary's glibc floor decides which Ubuntu the package runs
+  # on. Built on 24.04 it demands glibc 2.39 and does not start on 22.04,
+  # which is what a VPS most often runs. Same reasoning written in
+  # scripts/build-linux.sh.
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: tag matches Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          toml=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$tag" != "$toml" ]; then
+            echo "tag v$tag but Cargo.toml says $toml. Bump Cargo.toml (and regenerate Cargo.lock) in the tagged commit." >&2
+            exit 1
+          fi
+          echo "tag v$tag == Cargo.toml $toml"
+
+      # `protobuf-compiler` for easytier's build.rs, `libclang-dev` for
+      # kcp-sys's bindgen, `build-essential` for zstd-sys and for the dbus
+      # that EasyTier declares as a NON-optional Linux dependency with
+      # features = ["vendored"], so it compiles libdbus from source whether or
+      # not magic-dns is on.
+      - name: what the Rust chain needs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libclang-dev build-essential pkg-config
+
+      - name: rust
+        run: |
+          rustup show
+          rustc --version
+          cargo --version
+
+      - name: build
+        env:
+          KANPACHI_ENGINE_BUILD_REF: ${{ github.sha }}
+        run: cargo build --locked --release
+
+      - name: clippy
+        env:
+          KANPACHI_ENGINE_BUILD_REF: ${{ github.sha }}
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: test
+        env:
+          KANPACHI_ENGINE_BUILD_REF: ${{ github.sha }}
+        run: cargo test --locked --release
+
+      - name: no listener in source
+        run: |
+          if grep -nE 'TcpListener|UdpSocket::bind|NamedPipe|CreateNamedPipe|bind\(' src/*.rs; then
+            echo "the engine has exactly one command input, stdin. A second channel rebuilds the unauthenticated portal under another name." >&2
+            exit 1
+          fi
+          echo "no listener constructed in src/"
+
+      - name: keep the binary for publishing
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-linux
+          path: target/release/kanpachi-engine
+          if-no-files-found: error
+
+  # Publishes ONLY what passed both jobs above, which is the point of the whole
+  # workflow: the binary Kanpachi ships is the binary that went through
+  # customs, not a re-compilation of the same commit somewhere else.
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [windows, linux]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+
+      - name: sums
+        run: |
+          cd out
+          mv engine-windows/kanpachi-engine.exe .
+          mv engine-linux/kanpachi-engine .
+          sha256sum kanpachi-engine.exe kanpachi-engine > SHA256SUMS-engine
+          cat SHA256SUMS-engine
+
+      - name: publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: |
+            Kanpachi engine ${{ github.ref_name }}, built from `${{ github.sha }}`.
+
+            Consumed by Kanpachi's release through its `engine.pin`; not meant
+            to be downloaded by hand. Each binary carries its build id in a
+            `KANPACHI-ENGINE-BUILD-ID{...}` sentinel readable off the file.
+          files: |
+            out/kanpachi-engine.exe
+            out/kanpachi-engine
+            out/SHA256SUMS-engine

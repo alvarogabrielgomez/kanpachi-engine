@@ -23,9 +23,9 @@
 
 use std::time::Duration;
 
-use anyhow::{Context, anyhow};
-use easytier::common::global_ctx::GlobalCtxEvent;
+use anyhow::{anyhow, Context};
 use easytier::common::config::ConfigFileControl;
+use easytier::common::global_ctx::GlobalCtxEvent;
 use easytier::launcher::NetworkInstance;
 use easytier::proto::api::instance::{
     GenerateCredentialRequest, ListCredentialsRequest, ListRouteRequest, RenewCredentialRequest,
@@ -35,11 +35,11 @@ use easytier::proto::rpc_types::controller::BaseController;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
 
+use crate::config;
 use crate::proto::{
     CredentialOut, CredentialSummary, DiagnosticsOut, Event, EventKind, GuestArgs, HostArgs,
     IssueArgs, Outgoing, PeerOut, RendezvousArgs, RenewArgs, RevokeArgs,
 };
-use crate::config;
 
 /// Which of the two networks a call is about.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -63,7 +63,12 @@ const DEFAULT_MTU: u32 = 1380;
 
 impl Engine {
     pub fn new(out: mpsc::UnboundedSender<Outgoing>) -> Self {
-        Engine { room: None, lobby: None, room_mtu: DEFAULT_MTU, out }
+        Engine {
+            room: None,
+            lobby: None,
+            room_mtu: DEFAULT_MTU,
+            out,
+        }
     }
 
     pub async fn host(&mut self, args: &HostArgs) -> anyhow::Result<()> {
@@ -196,7 +201,9 @@ impl Engine {
     }
 
     fn room(&self) -> anyhow::Result<&NetworkInstance> {
-        self.room.as_ref().ok_or_else(|| anyhow!("there is no room running"))
+        self.room
+            .as_ref()
+            .ok_or_else(|| anyhow!("there is no room running"))
     }
 
     /// Issues a credential for one member.
@@ -210,7 +217,9 @@ impl Engine {
     /// player's machine to carry other people's traffic.
     pub async fn issue_credential(&self, args: &IssueArgs) -> anyhow::Result<CredentialOut> {
         if args.ttl_seconds <= 0 {
-            return Err(anyhow!("the credential's lifetime has to be more than zero seconds"));
+            return Err(anyhow!(
+                "the credential's lifetime has to be more than zero seconds"
+            ));
         }
         let api = self.api()?;
         let res = api
@@ -251,7 +260,9 @@ impl Engine {
     /// engine being unreachable, which is the case where retrying makes sense.
     pub async fn renew_credential(&self, args: &RenewArgs) -> anyhow::Result<i64> {
         if args.ttl_seconds <= 0 {
-            return Err(anyhow!("the credential's lifetime has to be more than zero seconds"));
+            return Err(anyhow!(
+                "the credential's lifetime has to be more than zero seconds"
+            ));
         }
         let api = self.api()?;
         let res = api
@@ -298,7 +309,10 @@ impl Engine {
         let api = self.api()?;
         let res = api
             .get_credential_manage_service()
-            .list_credentials(BaseController::default(), ListCredentialsRequest { instance: None })
+            .list_credentials(
+                BaseController::default(),
+                ListCredentialsRequest { instance: None },
+            )
             .await?;
         Ok(res
             .credentials
@@ -325,7 +339,10 @@ impl Engine {
         let svc = api.get_peer_manage_service();
 
         let me = svc
-            .show_node_info(BaseController::default(), ShowNodeInfoRequest { instance: None })
+            .show_node_info(
+                BaseController::default(),
+                ShowNodeInfoRequest { instance: None },
+            )
             .await?
             .node_info
             .ok_or_else(|| anyhow!("the engine does not know its own node yet"))?;
@@ -338,7 +355,10 @@ impl Engine {
         }];
 
         let routes = svc
-            .list_route(BaseController::default(), ListRouteRequest { instance: None })
+            .list_route(
+                BaseController::default(),
+                ListRouteRequest { instance: None },
+            )
             .await?
             .routes;
 
@@ -366,7 +386,10 @@ impl Engine {
         let api = self.api()?;
         let me = api
             .get_peer_manage_service()
-            .show_node_info(BaseController::default(), ShowNodeInfoRequest { instance: None })
+            .show_node_info(
+                BaseController::default(),
+                ShowNodeInfoRequest { instance: None },
+            )
             .await?
             .node_info
             .ok_or_else(|| anyhow!("the engine does not know its own node yet"))?;
@@ -387,6 +410,7 @@ impl Engine {
             // the path: probing that means sending from the machine and reading
             // the reply, which is the daemon's job and not the engine's.
             mtu: self.room_mtu,
+            engine_build: crate::build_id::BUILD.to_string(),
         })
     }
 
@@ -463,9 +487,10 @@ async fn pump(
         }
 
         let translated = match ev {
-            GlobalCtxEvent::TunDeviceReady(dev) => {
-                Some(Event::new(EventKind::Connected, format!("adapter {dev} is up")))
-            }
+            GlobalCtxEvent::TunDeviceReady(dev) => Some(Event::new(
+                EventKind::Connected,
+                format!("adapter {dev} is up"),
+            )),
             GlobalCtxEvent::TunDeviceError(e) => Some(Event::new(
                 EventKind::Disconnected,
                 format!("the virtual adapter failed: {e}"),
@@ -477,16 +502,18 @@ async fn pump(
             GlobalCtxEvent::PeerRemoved(_) => {
                 Some(Event::new(EventKind::PeersChanged, "somebody left"))
             }
-            GlobalCtxEvent::PeerConnAdded(_) | GlobalCtxEvent::PeerConnRemoved(_) => {
-                Some(Event::new(EventKind::PeersChanged, "a connection to a member changed"))
-            }
+            GlobalCtxEvent::PeerConnAdded(_) | GlobalCtxEvent::PeerConnRemoved(_) => Some(
+                Event::new(EventKind::PeersChanged, "a connection to a member changed"),
+            ),
 
-            GlobalCtxEvent::ConnectError(dst, _, err) => {
-                Some(Event::new(EventKind::Degraded, format!("could not reach {dst}: {err}")))
-            }
-            GlobalCtxEvent::ConnectionError(dst, _, err) => {
-                Some(Event::new(EventKind::Degraded, format!("connection to {dst} failed: {err}")))
-            }
+            GlobalCtxEvent::ConnectError(dst, _, err) => Some(Event::new(
+                EventKind::Degraded,
+                format!("could not reach {dst}: {err}"),
+            )),
+            GlobalCtxEvent::ConnectionError(dst, _, err) => Some(Event::new(
+                EventKind::Degraded,
+                format!("connection to {dst} failed: {err}"),
+            )),
             GlobalCtxEvent::DhcpIpv4Conflicted(addr) => Some(Event::new(
                 EventKind::Degraded,
                 format!("the address {addr:?} is already taken inside the room"),
@@ -498,9 +525,10 @@ async fn pump(
 
             // Revoking a credential is how a kick works, so the member list
             // changed even though no peer event fired.
-            GlobalCtxEvent::CredentialChanged => {
-                Some(Event::new(EventKind::PeersChanged, "the credentials changed"))
-            }
+            GlobalCtxEvent::CredentialChanged => Some(Event::new(
+                EventKind::PeersChanged,
+                "the credentials changed",
+            )),
 
             _ => None,
         };

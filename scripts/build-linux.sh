@@ -109,7 +109,10 @@ cd "$raiz"
 if [ "$clean" = 1 ]; then
 	cargo clean
 fi
-cargo build --release
+# --locked: el lock ES el pin de easytier (graba el commit exacto del fork).
+# Sin la bandera, un lock desfasado se regenera en silencio y el binario sale
+# de un commit que nadie escribió en ningún sitio.
+cargo build --locked --release
 
 bin="$CARGO_TARGET_DIR/release/kanpachi-engine"
 [ -x "$bin" ] || { echo "compiló y no apareció $bin" >&2; exit 1; }

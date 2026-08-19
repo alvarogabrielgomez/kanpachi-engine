@@ -45,7 +45,8 @@ use std::process::Command;
 fn main() {
     // Antes de cualquier salida temprana: no depende del enlazado y no debe
     // perderse porque la rama de arriba haya contestado.
-    embed_windows_version_info();
+    let build = build_id();
+    embed_windows_version_info(&build);
 
     println!("cargo:rerun-if-env-changed=KANPACHI_ENGINE_LINK_SEARCH");
 
@@ -78,7 +79,9 @@ fn main() {
         "x86" => "i686",
         "aarch64" => "arm64",
         other => {
-            println!("cargo:warning=unknown target arch {other}, not patching the link search path");
+            println!(
+                "cargo:warning=unknown target arch {other}, not patching the link search path"
+            );
             return;
         }
     };
@@ -176,10 +179,103 @@ fn cargo_roots() -> Vec<PathBuf> {
 /// tema—. Generar un `.rc` e invocar el `rc.exe` que el SDK de Windows ya trae
 /// cuesta lo mismo y no agrega nada al árbol.
 ///
+/// build_id computes what identifies THIS build and hands it to the source as
+/// the `KANPACHI_ENGINE_BUILD` compile-time env var.
+///
+/// # The shape: `<version>+<provenance>`
+///
+/// The version is `CARGO_PKG_VERSION`, always — declared in Cargo.toml,
+/// bumped per release, and what the tag must match. The provenance says which
+/// exact code produced the binary, and comes from the first of:
+///
+///  1. `KANPACHI_ENGINE_BUILD_REF`, set by whoever drives the build. The CI
+///     passes the commit it resolved and checked out, which is the only
+///     answer that is authoritative: it is what the release pins.
+///  2. `git rev-parse --short=12 HEAD`, with `.dirty` appended when the tree
+///     has uncommitted changes. A developer's desktop build says which commit
+///     it came from without anybody passing anything.
+///  3. `unknown` — a tarball without git and without the variable. Saying
+///     `unknown` is the honest floor; inventing a release-looking number here
+///     is exactly the lie this whole mechanism exists to kill.
+///
+/// # Why the version is NEVER filled in from the tag
+///
+/// Because most builds do not happen on a tagged commit, and a binary that
+/// claims `0.2.0` three commits after the tag is lying. The number lives in
+/// Cargo.toml where it is reviewed; the tag is checked against it in CI.
+fn build_id() -> String {
+    println!("cargo:rerun-if-env-changed=KANPACHI_ENGINE_BUILD_REF");
+    // These three cover the ways HEAD actually moves on a developer machine:
+    // the symbolic ref itself, the ref file it points at once resolved, and
+    // packed-refs for repositories that gc'd their loose refs. Without them a
+    // rebuilt binary can keep asserting the commit of the PREVIOUS build,
+    // which is the exact lie this id exists to kill. The CI never depends on
+    // them: the env var above invalidates the fingerprint on its own.
+    println!("cargo:rerun-if-changed=.git/HEAD");
+    if let Ok(head) = std::fs::read_to_string(".git/HEAD") {
+        if let Some(reference) = head.trim().strip_prefix("ref: ") {
+            println!("cargo:rerun-if-changed=.git/{reference}");
+        }
+    }
+    println!("cargo:rerun-if-changed=.git/packed-refs");
+
+    let version = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| String::from("0.0.0"));
+    let provenance = env::var("KANPACHI_ENGINE_BUILD_REF")
+        .ok()
+        .map(|r| {
+            let r = r.trim().to_string();
+            // The CI passes a full 40-hex commit; twelve characters identify
+            // it and keep the banner one line. Anything else passes through
+            // verbatim: whoever set the variable said what they meant.
+            if r.len() == 40 && r.bytes().all(|b| b.is_ascii_hexdigit()) {
+                format!("g{}", &r[..12])
+            } else {
+                r
+            }
+        })
+        .filter(|r| !r.is_empty())
+        .or_else(git_provenance)
+        .unwrap_or_else(|| String::from("unknown"));
+
+    let build = format!("{version}+{provenance}");
+    println!("cargo:rustc-env=KANPACHI_ENGINE_BUILD={build}");
+    build
+}
+
+/// git_provenance asks git where HEAD is, for the desktop build.
+///
+/// Any failure — no git, no repository, a hostile PATH — degrades to None and
+/// the caller says `unknown`. A build script that refuses to build because git
+/// is missing would be enforcing provenance by breaking the tarball case.
+fn git_provenance() -> Option<String> {
+    use std::process::Command;
+    let head = Command::new("git")
+        .args(["rev-parse", "--short=12", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    let sha = String::from_utf8_lossy(&head.stdout).trim().to_string();
+    if sha.is_empty() {
+        return None;
+    }
+    let dirty = Command::new("git")
+        .args(["status", "--porcelain"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| !o.stdout.is_empty())
+        .unwrap_or(false);
+    Some(if dirty {
+        format!("g{sha}.dirty")
+    } else {
+        format!("g{sha}")
+    })
+}
+
 /// **Falla en blando a propósito.** Si no aparece `rc.exe`, avisa y sigue: el
 /// binario queda sin nombre bonito, que es un defecto cosmético. Romper una
 /// compilación por eso sería peor que el problema.
-fn embed_windows_version_info() {
+fn embed_windows_version_info(build: &str) {
     println!("cargo:rerun-if-env-changed=KANPACHI_ENGINE_RC");
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
@@ -294,7 +390,7 @@ FILETYPE 0x1L
       VALUE "LegalCopyright", "Accentio Studios\0"
       VALUE "OriginalFilename", "kanpachi-engine.exe\0"
       VALUE "ProductName", "Kanpachi\0"
-      VALUE "ProductVersion", "{dotted}\0"
+      VALUE "ProductVersion", "{build}\0"
     }}
   }}
   BLOCK "VarFileInfo"
