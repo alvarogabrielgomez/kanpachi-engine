@@ -4,7 +4,7 @@ Part of **[Kanpachi Protection](https://github.com/alvarogabrielgomez/kanpachi/b
 *everything the game did not ask for is closed on the virtual adapter.*
 
 This is the network engine of
-[Kanpachi](https://github.com/alvarogabrielgomez/kanpachi): a small Windows
+[Kanpachi](https://github.com/alvarogabrielgomez/kanpachi): a small
 binary that builds the encrypted peer-to-peer network and **listens on nothing**.
 
 Its share of that promise is narrow and worth stating plainly. **The engine
