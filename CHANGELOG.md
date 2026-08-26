@@ -17,6 +17,12 @@ Pure refactors and CI plumbing stay in commit messages.
 
 ## Unreleased
 
+## [0.1.1] - 2026-08-26
+
+### Fixed
+
+- Emit a peer change only once that peer's route carries an address. The event bus fires `PeerConnAdded` the moment a connection comes up, and `peers` drops every route with no `ipv4_addr` because a node with no address in the room is not a member of it, so the consumer's re-read returned a list without the member who had just arrived; the routes converged seconds later and produced no further event. Measured against a real host in Kubernetes: the guest appeared 4.3 seconds after the host had applied its firewall rules from that list, and three people stayed locked out of the room for thirty-three hours. It emits anyway when the three-second wait runs out, because the public seed never resolves an address and going quiet would trade a late event for no event ([ba85c43](https://github.com/alvarogabrielgomez/kanpachi-engine/commit/ba85c43))
+
 ## [0.1.0] - 2026-08-19
 
 ### Added
@@ -32,4 +38,5 @@ Pure refactors and CI plumbing stay in commit messages.
 
 - Bring the customs back from the dead: the pinned toolchain installed without clippy, so every run died before checking anything and three consecutive commits shipped inside Kanpachi installers ungated. The toolchain file now declares its components, which also revived `cargo fmt --check` — it sat behind clippy and had never run either ([9486f08](https://github.com/alvarogabrielgomez/kanpachi-engine/commit/9486f08))
 
+[0.1.1]: https://github.com/alvarogabrielgomez/kanpachi-engine/releases/tag/v0.1.1
 [0.1.0]: https://github.com/alvarogabrielgomez/kanpachi-engine/releases/tag/v0.1.0

@@ -1,6 +1,6 @@
 [package]
 name = "kanpachi-engine"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "LGPL-3.0-or-later"
 description = "Kanpachi's network engine: EasyTier as a library, with no administration portal"
