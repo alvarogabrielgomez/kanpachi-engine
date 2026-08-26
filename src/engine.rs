@@ -196,7 +196,15 @@ impl Engine {
         // An adapter is not a peer: saying that ours failed leaks nothing about
         // who else is in the lobby.
         let solo_adaptador = slot == Slot::Lobby;
-        tokio::spawn(pump(events, self.out.clone(), solo_adaptador));
+        // El api va SOLO en la sala, y es lo que le permite al bombeo esperar a
+        // que la ruta de quien entra lleve dirección antes de anunciarlo. Ver
+        // [`esperar_direccion`]. El vestíbulo no lo necesita: no reporta pares.
+        let api = if solo_adaptador {
+            None
+        } else {
+            self.api().ok()
+        };
+        tokio::spawn(pump(events, self.out.clone(), solo_adaptador, api));
         Ok(())
     }
 
@@ -443,6 +451,7 @@ async fn pump(
     mut events: tokio::sync::broadcast::Receiver<GlobalCtxEvent>,
     out: mpsc::UnboundedSender<Outgoing>,
     solo_adaptador: bool,
+    api: Option<std::sync::Arc<dyn easytier::rpc_service::InstanceRpcService>>,
 ) {
     loop {
         let ev = match events.recv().await {
@@ -497,15 +506,24 @@ async fn pump(
                 format!("the virtual adapter failed: {e}"),
             )),
 
-            GlobalCtxEvent::PeerAdded(_) => {
-                Some(Event::new(EventKind::PeersChanged, "somebody joined"))
+            GlobalCtxEvent::PeerAdded(id) => {
+                Some(esperar_direccion(api.as_ref(), id, "somebody joined").await)
             }
             GlobalCtxEvent::PeerRemoved(_) => {
                 Some(Event::new(EventKind::PeersChanged, "somebody left"))
             }
-            GlobalCtxEvent::PeerConnAdded(_) | GlobalCtxEvent::PeerConnRemoved(_) => Some(
-                Event::new(EventKind::PeersChanged, "a connection to a member changed"),
+            GlobalCtxEvent::PeerConnAdded(info) => Some(
+                esperar_direccion(
+                    api.as_ref(),
+                    info.peer_id,
+                    "a connection to a member came up",
+                )
+                .await,
             ),
+            GlobalCtxEvent::PeerConnRemoved(_) => Some(Event::new(
+                EventKind::PeersChanged,
+                "a connection to a member changed",
+            )),
 
             GlobalCtxEvent::ConnectError(dst, _, err) => Some(Event::new(
                 EventKind::Degraded,
@@ -577,6 +595,74 @@ fn bare_addr(s: &str) -> String {
     match s.split_once('/') {
         Some((addr, _)) => addr.to_string(),
         None => s.to_string(),
+    }
+}
+
+/// How long the pump waits for a new peer's route to carry an address.
+///
+/// Three seconds against a convergence measured in single digits of seconds on
+/// a real host: the guest showed up in the mesh 4.3 seconds after the host had
+/// already applied its rules. The cap matters more than the number, because
+/// past it the event goes out anyway.
+const ESPERA_DE_RUTA: Duration = Duration::from_secs(3);
+
+/// How often it re-reads the route table while waiting.
+const SONDEO_DE_RUTA: Duration = Duration::from_millis(100);
+
+/// Waits until a peer's route carries an address, then builds the event.
+///
+/// # The failure this closes, measured on 2026-08-25 against a real host
+///
+/// The bus fires `PeerConnAdded` the moment a connection comes up, and
+/// [`Engine::peers`] drops every route with no `ipv4_addr` because a node with
+/// no address in the room is not a member of it. Between those two facts sits a
+/// window: the daemon re-reads the moment the event lands, gets a list without
+/// the member who just arrived, writes its firewall rules from that list, and
+/// the routes converge seconds later WITHOUT producing another event. Nothing
+/// re-reads, and the member's every packet dies in the host's own gate. Three
+/// people were locked out of a room for thirty-three hours that way.
+///
+/// # Why it emits anyway when the wait runs out
+///
+/// Because a peer that never resolves an address is not a reason to go quiet.
+/// The public seed is exactly that: it relays for the room and does not live in
+/// its address space, so its route never carries one. Staying silent would trade
+/// a late event for no event, which is the same bug wearing different clothes.
+/// The reason says which of the two happened.
+async fn esperar_direccion(
+    api: Option<&std::sync::Arc<dyn easytier::rpc_service::InstanceRpcService>>,
+    peer_id: u32,
+    motivo: &str,
+) -> Event {
+    let Some(api) = api else {
+        return Event::new(EventKind::PeersChanged, motivo);
+    };
+
+    let limite = tokio::time::Instant::now() + ESPERA_DE_RUTA;
+    loop {
+        let convergio = api
+            .get_peer_manage_service()
+            .list_route(
+                BaseController::default(),
+                ListRouteRequest { instance: None },
+            )
+            .await
+            .map(|r| {
+                r.routes
+                    .iter()
+                    .any(|r| r.peer_id == peer_id && r.ipv4_addr.is_some())
+            })
+            .unwrap_or(false);
+        if convergio {
+            return Event::new(EventKind::PeersChanged, motivo);
+        }
+        if tokio::time::Instant::now() >= limite {
+            return Event::new(
+                EventKind::PeersChanged,
+                format!("{motivo}, and its route still has no address"),
+            );
+        }
+        tokio::time::sleep(SONDEO_DE_RUTA).await;
     }
 }
 
