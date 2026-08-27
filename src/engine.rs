@@ -629,6 +629,25 @@ pub const SHUTDOWN_GRACE: Duration = Duration::from_millis(300);
 /// link. With a single hop the path cost IS the edge cost, so a member on a
 /// direct tunnel reported `500 ms` for as long as the map took to converge.
 /// Reading the map directly is what makes the absence visible.
+///
+/// # Measured, 2026-08-26, two nodes over the public seed
+///
+/// A Windows host and a guest in WSL, which is behind enough NAT to force the
+/// relay. Both sides, instrumented, for the first fifteen seconds:
+///
+/// ```text
+/// mine=Some(138) theirs=None       path_latency=1000
+/// mine=Some(139) theirs=Some(144)  path_latency=279
+/// ```
+///
+/// `1000` is two unknown edges at 500 each, and it is what this field used to
+/// report while the map was still arriving. Once the far hop lands the two
+/// numbers agree: the host summed 146 + 151 = 297 and a plain ping across the
+/// tunnel averaged 296.
+///
+/// The local half is there from the very first read, because it comes off a
+/// connection this machine holds. That is the whole gain for a direct member:
+/// no waiting, and no 500.
 fn measured_rtt_ms(
     route: &Route,
     pairs: &[PeerRoutePair],
