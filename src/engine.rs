@@ -21,6 +21,7 @@
 //! command-line binary. Nothing on the library path names it. The engine gets
 //! the full surface and opens no socket.
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context};
@@ -28,9 +29,11 @@ use easytier::common::config::ConfigFileControl;
 use easytier::common::global_ctx::GlobalCtxEvent;
 use easytier::launcher::NetworkInstance;
 use easytier::proto::api::instance::{
-    GenerateCredentialRequest, ListCredentialsRequest, ListRouteRequest, RenewCredentialRequest,
-    RevokeCredentialRequest, ShowNodeInfoRequest,
+    list_peer_route_pair, GenerateCredentialRequest, ListCredentialsRequest, ListPeerRequest,
+    ListRouteRequest, PeerRoutePair, RenewCredentialRequest, RevokeCredentialRequest, Route,
+    ShowNodeInfoRequest,
 };
+use easytier::proto::peer_rpc::{GetGlobalPeerMapRequest, PeerCenterRpc, PeerInfoForGlobalMap};
 use easytier::proto::rpc_types::controller::BaseController;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
@@ -359,7 +362,8 @@ impl Engine {
             virtual_ip: bare_addr(&me.ipv4_addr),
             hostname: me.hostname.clone(),
             path: "self",
-            rtt_ms: 0,
+            // Measuring the round trip to oneself is not a question.
+            rtt_ms: None,
         }];
 
         let routes = svc
@@ -370,6 +374,29 @@ impl Engine {
             .await?
             .routes;
 
+        let peers = svc
+            .list_peer(
+                BaseController::default(),
+                ListPeerRequest { instance: None },
+            )
+            .await?
+            .peer_infos;
+        // Every node keeps its own copy of this map in RAM and refreshes it
+        // every fifteen seconds, so this call goes nowhere near the network.
+        // See [`measured_rtt_ms`] for what is read out of it.
+        let global = api
+            .get_peer_center_service()
+            .get_global_peer_map(
+                BaseController::default(),
+                GetGlobalPeerMapRequest { digest: 0 },
+            )
+            .await?
+            .global_peer_map;
+        // Built from the UNFILTERED routes on purpose: the seed is dropped from
+        // the member list below and is still needed here, because it is the
+        // middle hop of every relayed path.
+        let pairs = list_peer_route_pair(peers, routes.clone());
+
         for r in routes {
             // A node with no address in the room is not a member of it.
             //
@@ -379,11 +406,12 @@ impl Engine {
             // handed the daemon a member to key firewall rules on that has no
             // address to key them on.
             let Some(addr) = r.ipv4_addr else { continue };
+            let rtt_ms = measured_rtt_ms(&r, &pairs, &global);
             out.push(PeerOut {
                 virtual_ip: bare_addr(&format!("{addr}")),
                 hostname: r.hostname,
                 path: if r.cost <= 1 { "direct" } else { "relay" },
-                rtt_ms: r.path_latency,
+                rtt_ms,
             });
         }
         Ok(out)
@@ -571,6 +599,78 @@ async fn pump(
 /// a network card that lingers.
 pub const SHUTDOWN_GRACE: Duration = Duration::from_millis(300);
 
+/// The round trip to one member, measured, or nothing.
+///
+/// # Where each number comes from
+///
+/// One hop is a tunnel this machine holds, so the answer is in its own
+/// connection stats: `PeerRoutePair::get_latency_ms` reads `stats.latency_us`
+/// off the default connection, or the lowest of them. Nothing else is
+/// consulted for that hop, and that is deliberate: a route with a cost of one
+/// and no live connection is EVIDENCE, the exact case the daemon's dial
+/// diagnosis reads, and filling it in from elsewhere would blunt it.
+///
+/// Two hops is the room's relay: this machine to the seed, and the seed to the
+/// member. The first half is a local measurement again. The second half is one
+/// the SEED took on its own connections and published, and it arrives in the
+/// peer center's global map, which every node refreshes into RAM every fifteen
+/// seconds. Adding them approximates the end to end round trip, because the
+/// packet crosses both hops in both directions.
+///
+/// Three hops or more reports nothing. Walking that chain needs each middle
+/// node's route table and this machine only has its own, so the honest answer
+/// is that nobody measured it. A Kanpachi room has one relay, the public seed,
+/// so this is not a case the product produces today.
+///
+/// # Why not the route's own path_latency, which is this same sum
+///
+/// Because it substitutes a flat 500 for an edge the peer center has not heard
+/// about yet, and the sum gives nobody a way to tell that apart from a slow
+/// link. With a single hop the path cost IS the edge cost, so a member on a
+/// direct tunnel reported `500 ms` for as long as the map took to converge.
+/// Reading the map directly is what makes the absence visible.
+fn measured_rtt_ms(
+    route: &Route,
+    pairs: &[PeerRoutePair],
+    global: &BTreeMap<u32, PeerInfoForGlobalMap>,
+) -> Option<i32> {
+    // A hop this machine holds, from its own connection stats.
+    let mine = |peer_id: u32| -> Option<i32> {
+        pairs
+            .iter()
+            .find(|p| p.route.as_ref().is_some_and(|r| r.peer_id == peer_id))
+            .and_then(|p| p.get_latency_ms())
+            .map(as_ms)
+    };
+    // A hop somebody else measured and the center passed along. It reports one
+    // direction; latency is close enough to symmetric that EasyTier's own cost
+    // calculator falls back to the other one, and so does this.
+    let theirs = |src: u32, dst: u32| -> Option<i32> {
+        let one = |a: u32, b: u32| {
+            global
+                .get(&a)
+                .and_then(|info| info.direct_peers.get(&b))
+                .map(|d| d.latency_ms)
+        };
+        one(src, dst).or_else(|| one(dst, src)).map(|ms| ms.max(1))
+    };
+    match route.cost {
+        c if c <= 1 => mine(route.peer_id),
+        2 => Some(mine(route.next_hop_peer_id)? + theirs(route.next_hop_peer_id, route.peer_id)?),
+        _ => None,
+    }
+}
+
+/// Milliseconds out of EasyTier's float, floored at one.
+///
+/// A direct tunnel on the same physical LAN measures below a millisecond and
+/// would round to zero, which on this wire is the value that means nobody
+/// measured it. EasyTier floors its own global map the same way. See
+/// [`crate::proto::PeerOut::rtt_ms`].
+fn as_ms(ms: f64) -> i32 {
+    (ms.round() as i32).max(1)
+}
+
 /// Strips a prefix length so that `virtual_ip` is what the protocol says it is.
 ///
 /// # The bug this fixes, seen in a real room
@@ -668,12 +768,141 @@ async fn esperar_direccion(
 
 #[cfg(test)]
 mod tests {
-    use super::bare_addr;
+    use super::{bare_addr, measured_rtt_ms};
+    use easytier::proto::api::instance::{
+        PeerConnInfo, PeerConnStats, PeerInfo, PeerRoutePair, Route,
+    };
+    use easytier::proto::peer_rpc::{DirectConnectedPeerInfo, PeerInfoForGlobalMap};
+    use std::collections::BTreeMap;
+
+    const ME: u32 = 1;
+    const SEED: u32 = 2;
+    const MEMBER: u32 = 3;
+
+    /// A route with only the three fields this decision reads.
+    fn route(peer_id: u32, cost: i32, next_hop: u32) -> Route {
+        Route {
+            peer_id,
+            cost,
+            next_hop_peer_id: next_hop,
+            ..Default::default()
+        }
+    }
+
+    /// One pair carrying a live connection with a measurement on it.
+    ///
+    /// No `default_conn_id`, so `get_latency_ms` takes the lowest of the
+    /// connections, which with one connection is that one.
+    fn pair_with_stats(peer_id: u32, latency_us: u64) -> PeerRoutePair {
+        PeerRoutePair {
+            route: Some(route(peer_id, 1, peer_id)),
+            peer: Some(PeerInfo {
+                peer_id,
+                conns: vec![PeerConnInfo {
+                    conn_id: "c".to_string(),
+                    peer_id,
+                    stats: Some(PeerConnStats {
+                        latency_us,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+        }
+    }
+
+    /// What the center heard: `src` measured `latency_ms` to `dst`.
+    fn global(src: u32, dst: u32, latency_ms: i32) -> BTreeMap<u32, PeerInfoForGlobalMap> {
+        let mut direct_peers = BTreeMap::new();
+        direct_peers.insert(dst, DirectConnectedPeerInfo { latency_ms });
+        let mut map = BTreeMap::new();
+        map.insert(src, PeerInfoForGlobalMap { direct_peers });
+        map
+    }
 
     #[test]
     fn strips_the_prefix_and_leaves_a_bare_address_alone() {
         assert_eq!(bare_addr("10.99.61.1/24"), "10.99.61.1");
         assert_eq!(bare_addr("10.99.61.1"), "10.99.61.1");
         assert_eq!(bare_addr(""), "");
+    }
+
+    #[test]
+    fn a_direct_member_reports_what_its_own_connection_measured() {
+        let pairs = vec![pair_with_stats(MEMBER, 12_400)];
+        assert_eq!(
+            measured_rtt_ms(&route(MEMBER, 1, MEMBER), &pairs, &BTreeMap::new()),
+            Some(12)
+        );
+    }
+
+    /// The route exists and no connection has a measurement on it, which is
+    /// evidence and not a gap to paper over: the daemon's dial diagnosis reads
+    /// exactly this case. Nothing is reported, and the peer center's map is not
+    /// consulted for a hop this machine holds itself.
+    #[test]
+    fn a_direct_member_with_no_live_connection_reports_nothing() {
+        let pairs = vec![PeerRoutePair {
+            route: Some(route(MEMBER, 1, MEMBER)),
+            peer: None,
+        }];
+        assert_eq!(
+            measured_rtt_ms(&route(MEMBER, 1, MEMBER), &pairs, &global(ME, MEMBER, 40),),
+            None
+        );
+    }
+
+    #[test]
+    fn a_relayed_member_adds_the_two_measured_hops() {
+        let pairs = vec![pair_with_stats(SEED, 80_000)];
+        assert_eq!(
+            measured_rtt_ms(&route(MEMBER, 2, SEED), &pairs, &global(SEED, MEMBER, 81),),
+            Some(161)
+        );
+    }
+
+    /// The center reports one direction. Latency is close enough to symmetric
+    /// that EasyTier's own cost calculator falls back to the other one, and so
+    /// does this.
+    #[test]
+    fn a_relayed_member_accepts_the_far_hop_measured_the_other_way_round() {
+        let pairs = vec![pair_with_stats(SEED, 80_000)];
+        assert_eq!(
+            measured_rtt_ms(&route(MEMBER, 2, SEED), &pairs, &global(MEMBER, SEED, 81),),
+            Some(161)
+        );
+    }
+
+    /// This is the case the flat 500 used to hide.
+    #[test]
+    fn a_relayed_member_with_the_far_hop_missing_reports_nothing() {
+        let pairs = vec![pair_with_stats(SEED, 80_000)];
+        assert_eq!(
+            measured_rtt_ms(&route(MEMBER, 2, SEED), &pairs, &BTreeMap::new()),
+            None
+        );
+    }
+
+    /// A tunnel on the same physical LAN measures below a millisecond, and zero
+    /// is the value that means "nobody measured it".
+    #[test]
+    fn a_link_faster_than_a_millisecond_still_reports_one() {
+        let pairs = vec![pair_with_stats(MEMBER, 400)];
+        assert_eq!(
+            measured_rtt_ms(&route(MEMBER, 1, MEMBER), &pairs, &BTreeMap::new()),
+            Some(1)
+        );
+    }
+
+    /// Walking a longer chain needs each middle node's route table, and this
+    /// machine only has its own.
+    #[test]
+    fn a_path_longer_than_the_relay_reports_nothing() {
+        let pairs = vec![pair_with_stats(SEED, 80_000)];
+        assert_eq!(
+            measured_rtt_ms(&route(MEMBER, 3, SEED), &pairs, &global(SEED, MEMBER, 81),),
+            None
+        );
     }
 }

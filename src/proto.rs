@@ -284,7 +284,21 @@ pub struct PeerOut {
     /// set, so a value it does not know has to be an error there and not a
     /// silent default.
     pub path: &'static str,
-    pub rtt_ms: i32,
+    /// The measured round trip in milliseconds, absent when nobody measured it.
+    ///
+    /// It used to carry the route's `path_latency`, which is the cost Dijkstra
+    /// summed and not a round trip. Every hop of that sum comes from EasyTier's
+    /// peer center, and an edge the center has not heard about yet contributes
+    /// a flat `unwrap_or(500)`. With a single hop the path cost IS the edge
+    /// cost, so a member on a direct tunnel printed `500 ms` until the map
+    /// converged and then printed the truth: a sentinel wearing the unit of a
+    /// measurement, which reads as somebody on the other side of the planet.
+    ///
+    /// Absent rather than zero, because zero is a number. The daemon reads the
+    /// absence back as no measurement, which is what its three faces already
+    /// paint as an empty slot.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rtt_ms: Option<i32>,
 }
 
 #[derive(Debug, Serialize)]
