@@ -1,14 +1,24 @@
 name: build
 
-# Two triggers, two meanings. A push or PR is the CUSTOMS CHECK: does this code
-# get to travel. A `v*` tag is a RELEASE: the same checks, on both platforms,
-# and then the binaries that PASSED them are published — so the artefact
-# Kanpachi downloads is the artefact that was checked, not a second compilation
-# of hopefully the same commit. Kanpachi pins the tag in its `engine.pin` and
-# verifies the SHA256SUMS this workflow writes.
+# Two triggers, two meanings. A pull request is the CUSTOMS CHECK: does this
+# code get to travel. A `v*` tag is a RELEASE: the same checks, on both
+# platforms, and then the binaries that PASSED them are published — so the
+# artefact Kanpachi downloads is the artefact that was checked, not a second
+# compilation of hopefully the same commit. Kanpachi pins the tag in its
+# `engine.pin` and verifies the SHA256SUMS this workflow writes.
+#
+# **A push to `main` is NOT one of them, and it used to be.** One change was
+# compiled three times: once for its pull request, once for the merge commit,
+# and once for the tag. The last two are the SAME commit, because the tag is
+# put on the merge, so it was the same tree built twice at twenty Windows
+# minutes a go.
+#
+# What that third run could have caught is main breaking from two branches
+# merged close together, each green on its own. That is worth having with
+# several people landing work at once, and this repository has one. If that
+# changes, `branches: [main]` goes back and the cost comes back with it.
 on:
   push:
-    branches: [main]
     tags: ['v*']
   pull_request:
 
