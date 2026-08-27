@@ -17,6 +17,12 @@ Pure refactors and CI plumbing stay in commit messages.
 
 ## Unreleased
 
+## [0.1.2] - 2026-08-26
+
+### Fixed
+
+- Report a measured round trip for a peer, or none at all. `rtt_ms` carried the route's `path_latency`, which is the cost Dijkstra summed and not a round trip, and every edge the peer center had not heard about yet contributed a flat 500 to that sum. With a single hop the path cost IS the edge cost, so a member on a direct tunnel came back as `500 ms` until the map converged and then came back as the truth. A direct member now reports what this machine's own connection stats measured; a relayed one reports the two measured hops added together, the local one from those same stats and the far one from the figure the seed published. The field is now optional and absent when nobody measured it, so a consumer can tell "no measurement" from "zero milliseconds" ([4d072b0](https://github.com/alvarogabrielgomez/kanpachi-engine/commit/4d072b0))
+
 ## [0.1.1] - 2026-08-26
 
 ### Fixed
@@ -38,5 +44,6 @@ Pure refactors and CI plumbing stay in commit messages.
 
 - Bring the customs back from the dead: the pinned toolchain installed without clippy, so every run died before checking anything and three consecutive commits shipped inside Kanpachi installers ungated. The toolchain file now declares its components, which also revived `cargo fmt --check` — it sat behind clippy and had never run either ([9486f08](https://github.com/alvarogabrielgomez/kanpachi-engine/commit/9486f08))
 
+[0.1.2]: https://github.com/alvarogabrielgomez/kanpachi-engine/releases/tag/v0.1.2
 [0.1.1]: https://github.com/alvarogabrielgomez/kanpachi-engine/releases/tag/v0.1.1
 [0.1.0]: https://github.com/alvarogabrielgomez/kanpachi-engine/releases/tag/v0.1.0
